@@ -1,3 +1,14 @@
 node_modules/
 dist/
 .env
+.claude/
+
+# Dataset de imágenes (182MB - demasiado grande para GitHub)
+data/
+
+# Modelo entrenado (91MB - guardar en Drive o descargar por separado)
+backend/model/*.pt
+
+# Archivos de caché de Python
+__pycache__/
+*.pyc
