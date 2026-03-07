@@ -1,5 +1,6 @@
-import React, { useState, useRef } from 'react';
-import { UploadCloud, User, X, CheckCircle, XCircle, Search, Loader2, Download, AlertCircle } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { UploadCloud, User, X, CheckCircle, XCircle, Search, Loader2, Download, AlertCircle, BookOpen, RefreshCw } from 'lucide-react';
+import JSZip from 'jszip';
 import * as XLSX from 'xlsx';
 
 function App() {
@@ -8,8 +9,14 @@ function App() {
   const [isClassifying, setIsClassifying] = useState(false);
   const [isDragActive, setIsDragActive] = useState(false);
   const [error, setError] = useState(null);
+  const [feedbackStats, setFeedbackStats] = useState({ total: 0, by_species: {} });
+  const [retrainMsg, setRetrainMsg] = useState('');
+  const [isRetraining, setIsRetraining] = useState(false);
+  const [isSavingFeedback, setIsSavingFeedback] = useState(false);
+  const [knownClasses, setKnownClasses] = useState([]);
   const fileInputRef = useRef(null);
   const nextId = useRef(1);
+  const pollRef = useRef(null);
 
   // --- File handling ---
 
@@ -81,10 +88,109 @@ function App() {
     setResults((prev) =>
       prev.map((r) =>
         r.tree_id === treeId
-          ? { ...r, verification: r.verification === status ? null : status }
+          ? { ...r, verification: r.verification === status ? null : status, correction: r.verification === status ? '' : r.correction }
           : r
       )
     );
+  };
+
+  const handleCorrection = (treeId, value) => {
+    setResults((prev) =>
+      prev.map((r) => r.tree_id === treeId ? { ...r, correction: value } : r)
+    );
+  };
+
+  // --- Feedback & Retrain ---
+
+  const parseTreeId = (filename) => {
+    const name = filename.replace(/\.[^.]+$/, '');
+    const match = name.match(/^(\w+)-\d+$/);
+    return match ? match[1] : null;
+  };
+
+  const fetchFeedbackStats = async () => {
+    try {
+      const res = await fetch('/api/feedback/stats');
+      if (res.ok) setFeedbackStats(await res.json());
+    } catch (_) {}
+  };
+
+  useEffect(() => {
+    fetchFeedbackStats();
+    fetch('/api/classes')
+      .then(r => r.ok ? r.json() : [])
+      .then(data => setKnownClasses(Array.isArray(data) ? data : []))
+      .catch(() => {});
+  }, []);
+
+  const isKnownSpecies = (name) => {
+    if (!Array.isArray(knownClasses) || !name?.trim()) return false;
+    return knownClasses.some((c) => c.trim().toLowerCase() === name.trim().toLowerCase());
+  };
+
+  const pendingCorrections = results.filter(
+    (r) => r.verification === 'rejected' && r.correction?.trim()
+  );
+  const knownCorrections   = pendingCorrections.filter((r) => isKnownSpecies(r.correction));
+  const unknownCorrections = pendingCorrections.filter((r) => !isKnownSpecies(r.correction));
+
+  const handleSaveFeedback = async () => {
+    if (knownCorrections.length === 0) return;
+    setIsSavingFeedback(true);
+    try {
+      for (const result of knownCorrections) {
+        const matchedFiles = files.filter(
+          (f) => parseTreeId(f.file.name) === result.tree_id
+        );
+        if (matchedFiles.length === 0) continue;
+        const formData = new FormData();
+        formData.append('species', result.correction.trim());
+        matchedFiles.forEach((f) => formData.append('files', f.file, f.file.name));
+        await fetch('/api/feedback', { method: 'POST', body: formData });
+      }
+      await fetchFeedbackStats();
+    } finally {
+      setIsSavingFeedback(false);
+    }
+  };
+
+  const handleDownloadUnknown = async () => {
+    const zip = new JSZip();
+    for (const result of unknownCorrections) {
+      const speciesName = result.correction.trim();
+      const matchedFiles = files.filter(
+        (f) => parseTreeId(f.file.name) === result.tree_id
+      );
+      for (const f of matchedFiles) {
+        const buf = await f.file.arrayBuffer();
+        zip.file(`${speciesName}/${f.file.name}`, buf);
+      }
+    }
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = 'especies_nuevas.zip';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleRetrain = async () => {
+    setIsRetraining(true);
+    setRetrainMsg('Iniciando...');
+    await fetch('/api/retrain', { method: 'POST' });
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch('/api/retrain/status');
+        const data = await res.json();
+        setRetrainMsg(data.message);
+        if (!data.running) {
+          clearInterval(pollRef.current);
+          setIsRetraining(false);
+          fetchFeedbackStats();
+        }
+      } catch (_) {}
+    }, 1500);
   };
 
   // --- Excel export ---
@@ -95,7 +201,11 @@ function App() {
       'Especie Predicha': r.predicted_species,
       'Confianza (%)': r.confidence,
       'Especie Validada':
-        r.verification === 'confirmed' ? r.predicted_species : 'No identificado',
+        r.verification === 'confirmed'
+          ? r.predicted_species
+          : r.verification === 'rejected' && r.correction?.trim()
+          ? r.correction.trim()
+          : 'No identificado',
       'Estado de Verificación':
         r.verification === 'confirmed'
           ? 'Confirmado'
@@ -152,7 +262,7 @@ function App() {
 
           <div className="flex flex-col lg:flex-row gap-6 flex-1">
             {/* Left Column - Upload */}
-            <div className="flex-1 flex flex-col gap-4">
+            <div className="flex-1 min-w-0 flex flex-col gap-4">
               <div className="bg-white/90 rounded-lg px-4 py-2 shadow-sm inline-block border border-unergy-green">
                 <h2 className="text-lg font-medium text-gray-700">
                   1. Cargar Imágenes del Inventario
@@ -191,7 +301,7 @@ function App() {
                 </div>
 
                 {/* Image Gallery */}
-                <div className="border border-unergy-green rounded-lg p-3 bg-green-50/30">
+                <div className="border border-unergy-green rounded-lg p-3 bg-green-50/30 overflow-hidden">
                   <div className="flex overflow-x-auto gap-3 pb-2 scrollbar-thin">
                     {files.length === 0 ? (
                       <div className="w-full h-28 flex items-center justify-center text-sm text-gray-400 italic">
@@ -316,6 +426,33 @@ function App() {
                               {r.predicted_species}
                             </p>
                             <p className="text-xs text-gray-400">{r.confidence}% confianza</p>
+                            {r.verification === 'rejected' && (
+                              <div className="mt-1.5">
+                                <input
+                                  type="text"
+                                  value={r.correction || ''}
+                                  onChange={(e) => handleCorrection(r.tree_id, e.target.value)}
+                                  placeholder="Especie correcta..."
+                                  className={`w-full text-xs rounded px-2 py-1 bg-white focus:outline-none text-gray-700 placeholder-gray-400 border
+                                    ${!r.correction?.trim()
+                                      ? 'border-red-300 focus:border-red-400'
+                                      : isKnownSpecies(r.correction)
+                                      ? 'border-green-400 focus:border-green-500'
+                                      : 'border-amber-400 focus:border-amber-500'
+                                    }`}
+                                />
+                                {r.correction?.trim() && !isKnownSpecies(r.correction) && (
+                                  <p className="text-[10px] text-amber-600 mt-0.5 leading-tight">
+                                    ⚠ Especie no está en la base de datos. Se descargará para agregar manualmente.
+                                  </p>
+                                )}
+                                {r.correction?.trim() && isKnownSpecies(r.correction) && (
+                                  <p className="text-[10px] text-green-600 mt-0.5">
+                                    ✓ Especie reconocida
+                                  </p>
+                                )}
+                              </div>
+                            )}
                           </div>
 
                           {/* Verification buttons */}
@@ -348,7 +485,7 @@ function App() {
                     </div>
 
                     {/* Download button */}
-                    <div className="p-3 border-t border-gray-300">
+                    <div className="p-3 border-t border-gray-300 flex flex-col gap-2">
                       <button
                         onClick={handleDownloadExcel}
                         className="w-full py-2.5 rounded-lg flex items-center justify-center gap-2 font-medium text-white bg-unergy-green hover:bg-unergy-dark shadow-sm transition-all"
@@ -356,6 +493,61 @@ function App() {
                         <Download className="h-4 w-4" />
                         <span>Descargar Informe Excel</span>
                       </button>
+
+                      {/* Save known corrections */}
+                      {knownCorrections.length > 0 && (
+                        <button
+                          onClick={handleSaveFeedback}
+                          disabled={isSavingFeedback}
+                          className="w-full py-2.5 rounded-lg flex items-center justify-center gap-2 font-medium text-white bg-amber-500 hover:bg-amber-600 shadow-sm transition-all disabled:bg-gray-400 disabled:cursor-not-allowed"
+                        >
+                          {isSavingFeedback ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <BookOpen className="h-4 w-4" />
+                          )}
+                          <span>
+                            {isSavingFeedback
+                              ? 'Guardando...'
+                              : `Guardar ${knownCorrections.length} corrección${knownCorrections.length > 1 ? 'es' : ''} al modelo`}
+                          </span>
+                        </button>
+                      )}
+
+                      {/* Download unknown species */}
+                      {unknownCorrections.length > 0 && (
+                        <button
+                          onClick={handleDownloadUnknown}
+                          className="w-full py-2.5 rounded-lg flex items-center justify-center gap-2 font-medium text-white bg-slate-600 hover:bg-slate-700 shadow-sm transition-all"
+                        >
+                          <Download className="h-4 w-4" />
+                          <span>Descargar {unknownCorrections.length} especie{unknownCorrections.length > 1 ? 's' : ''} nueva{unknownCorrections.length > 1 ? 's' : ''} (ZIP)</span>
+                        </button>
+                      )}
+
+                      {/* Retrain */}
+                      <div className="border border-gray-300 rounded-lg p-2.5 bg-gray-50">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xs text-gray-500 font-medium">
+                            Banco de correcciones: <span className="text-gray-700 font-semibold">{feedbackStats.total} imágenes</span>
+                          </span>
+                        </div>
+                        {retrainMsg && (
+                          <p className="text-xs text-gray-500 mb-1.5 italic">{retrainMsg}</p>
+                        )}
+                        <button
+                          onClick={handleRetrain}
+                          disabled={isRetraining || feedbackStats.total === 0}
+                          className="w-full py-2 rounded-lg flex items-center justify-center gap-2 font-medium text-white bg-indigo-600 hover:bg-indigo-700 shadow-sm transition-all disabled:bg-gray-400 disabled:cursor-not-allowed text-sm"
+                        >
+                          {isRetraining ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <RefreshCw className="h-4 w-4" />
+                          )}
+                          <span>{isRetraining ? 'Reentrenando...' : 'Reentrenar Modelo'}</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )}
