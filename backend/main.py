@@ -11,6 +11,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import List, Optional
 
+import httpx
 import torch
 import torchvision.transforms as transforms
 from torchvision import models
@@ -23,6 +24,8 @@ from fastapi.responses import FileResponse
 from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=Path(__file__).parent / ".env")
+
+PLANTNET_API_KEY = os.getenv("PLANTNET_API_KEY", "")
 # ── Descargar modelo si MODEL_URL está configurado ─────────────────────────────
 MODEL_DIR    = Path(__file__).parent / "model"
 MODEL_PATH   = MODEL_DIR / "resnet50_plantas.pt"
@@ -147,6 +150,44 @@ def classify_image(image_bytes: bytes) -> dict | None:
         pred_idx = probs.argmax().item()
     return {"species": class_names[pred_idx], "confidence": probs[pred_idx].item()}
 
+async def identify_plantnet(images_bytes: list[bytes]) -> dict | None:
+    """Envía hasta 5 imágenes de un mismo árbol a Pl@ntNet y retorna el top-3."""
+    if not PLANTNET_API_KEY:
+        return None
+    try:
+        files = [
+            ("images", (f"img{i}.jpg", img, "image/jpeg"))
+            for i, img in enumerate(images_bytes[:5])
+        ]
+        organs = [("organs", "auto")] * len(files)
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                "https://my-api.plantnet.org/v2/identify/all",
+                params={"api-key": PLANTNET_API_KEY, "lang": "es", "nb-results": 3},
+                files=files + organs,
+            )
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        results = []
+        for r in data.get("results", [])[:3]:
+            sp = r.get("species", {})
+            img_url = None
+            imgs = r.get("images", [])
+            if imgs:
+                img_url = imgs[0].get("url", {}).get("m")
+            results.append({
+                "species":     sp.get("scientificName", ""),
+                "common_name": (sp.get("commonNames") or [""])[0],
+                "family":      sp.get("family", {}).get("scientificName", ""),
+                "confidence":  round(r.get("score", 0) * 100, 1),
+                "image_url":   img_url,
+            })
+        return results if results else None
+    except Exception:
+        return None
+
+
 def make_thumbnail(image_bytes: bytes, size: int = 200) -> str:
     img = Image.open(BytesIO(image_bytes)).convert("RGB")
     img.thumbnail((size, size))
@@ -190,6 +231,10 @@ async def classify(
             if prediction and prediction["confidence"] > best_confidence:
                 best_confidence = prediction["confidence"]
                 best_prediction = prediction
+
+        # Identificación con Pl@ntNet (todas las fotos del árbol)
+        plantnet = await identify_plantnet([p["content"] for p in photos])
+
         results.append({
             "tree_id":           tree_id,
             "predicted_species": best_prediction["species"] if best_prediction else "No identificado",
@@ -200,6 +245,7 @@ async def classify(
             "vereda":            vereda,
             "latitud":           latitud,
             "longitud":          longitud,
+            "plantnet":          plantnet,
         })
 
     # Guardar en base de datos
