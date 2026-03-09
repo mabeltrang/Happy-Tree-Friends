@@ -156,10 +156,11 @@ def main():
     args = parser.parse_args()
 
     # Cargar lista de especies
-    with open(CLASSES_PATH, encoding="utf-8") as f:
-        all_species = json.load(f)
-
-    species_list = [args.species] if args.species else all_species
+    if args.species:
+        species_list = [args.species]
+    else:
+        with open(CLASSES_PATH, encoding="utf-8") as f:
+            species_list = json.load(f)
 
     print(f"\n{'='*60}")
     print(f"  Descargando {args.max} fotos/fuente para {len(species_list)} especie(s)")
