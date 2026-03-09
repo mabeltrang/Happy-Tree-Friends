@@ -446,34 +446,8 @@ function App() {
 
                           <div className="flex-1 min-w-0">
                             <p className="text-xs text-gray-500 font-medium">Árbol #{r.tree_id}</p>
-
-                            {/* Mi modelo */}
-                            <div className="flex items-center gap-1 mt-0.5">
-                              <span className="w-2 h-2 rounded-full bg-unergy-green flex-none" />
-                              <p className="text-sm font-semibold text-gray-800 truncate">{r.predicted_species}</p>
-                            </div>
-                            <p className="text-xs text-gray-400 ml-3">{r.confidence}% · Mi modelo</p>
-
-                            {/* Pl@ntNet */}
-                            {r.plantnet && r.plantnet[0] && (
-                              <div className="mt-1.5 bg-green-50 rounded-md px-2 py-1.5 border border-green-100">
-                                <p className="text-[10px] text-green-700 font-semibold mb-1">🌿 Pl@ntNet</p>
-                                {r.plantnet.slice(0, 2).map((p, i) => (
-                                  <div key={i} className="flex items-center gap-1.5 mb-0.5">
-                                    {i === 0 && p.image_url && (
-                                      <img src={p.image_url} alt={p.species} className="w-7 h-7 rounded object-cover flex-none border border-green-200" />
-                                    )}
-                                    <div className="min-w-0">
-                                      <p className={`text-xs truncate ${i === 0 ? 'font-semibold text-gray-800' : 'text-gray-500'}`}>
-                                        {p.species}
-                                      </p>
-                                      <p className="text-[10px] text-gray-400">{p.confidence}%{p.common_name ? ` · ${p.common_name}` : ''}</p>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-
+                            <p className="text-sm font-semibold text-gray-800 truncate">{r.predicted_species}</p>
+                            <p className="text-xs text-gray-400">{r.confidence}% confianza</p>
                             {r.verification === 'rejected' && (
                               <div className="mt-1.5">
                                 <input
