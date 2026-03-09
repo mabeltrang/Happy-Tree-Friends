@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { UploadCloud, User, X, CheckCircle, XCircle, Search, Loader2, Download, AlertCircle, BookOpen, RefreshCw, MapPin } from 'lucide-react';
+import { UploadCloud, User, X, CheckCircle, XCircle, Search, Loader2, Download, AlertCircle, BookOpen, RefreshCw, MapPin, Map } from 'lucide-react';
 import JSZip from 'jszip';
 import * as XLSX from 'xlsx';
+import MapView from './MapView';
 
 function App() {
   const [files, setFiles] = useState([]);
@@ -21,6 +22,8 @@ function App() {
   const [vereda, setVereda]             = useState('');
   const [latitud, setLatitud]           = useState('');
   const [longitud, setLongitud]         = useState('');
+
+  const [activeTab, setActiveTab] = useState('clasificar');
 
   const fileInputRef = useRef(null);
   const nextId       = useRef(1);
@@ -223,10 +226,31 @@ function App() {
 
         {/* Main Content */}
         <main className="flex-1 max-w-7xl w-full mx-auto p-6 flex flex-col min-h-0">
-          <div className="bg-white/90 rounded-lg px-5 py-3 shadow-sm mb-6 border border-unergy-green text-center">
+          <div className="bg-white/90 rounded-lg px-5 py-3 shadow-sm mb-4 border border-unergy-green text-center">
             <h1 className="text-3xl font-bold text-gray-800">Happy Tree Friends - Clasificación Automatizada</h1>
           </div>
 
+          {/* Pestañas */}
+          <div className="flex gap-2 mb-4">
+            <button
+              onClick={() => setActiveTab('clasificar')}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition-all shadow-sm
+                ${activeTab === 'clasificar' ? 'bg-unergy-green text-white' : 'bg-white/90 text-gray-600 hover:bg-white border border-gray-200'}`}
+            >
+              <Search className="h-4 w-4" />
+              Clasificación
+            </button>
+            <button
+              onClick={() => setActiveTab('mapa')}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition-all shadow-sm
+                ${activeTab === 'mapa' ? 'bg-unergy-green text-white' : 'bg-white/90 text-gray-600 hover:bg-white border border-gray-200'}`}
+            >
+              <Map className="h-4 w-4" />
+              Mapa de Distribución
+            </button>
+          </div>
+
+          {activeTab === 'mapa' ? <MapView /> : (
           <div className="flex flex-col lg:flex-row gap-6 flex-1">
             {/* Left Column */}
             <div className="flex-1 min-w-0 flex flex-col gap-4">
@@ -501,6 +525,7 @@ function App() {
               </div>
             </div>
           </div>
+          )} {/* fin pestañas */}
         </main>
       </div>
     </div>
