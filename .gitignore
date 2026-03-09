@@ -9,6 +9,9 @@ data/
 # Modelo entrenado (91MB - guardar en Drive o descargar por separado)
 backend/model/*.pt
 
+# Base de datos local (se crea automáticamente en producción)
+backend/records.db
+
 # Archivos de caché de Python
 __pycache__/
 *.pyc

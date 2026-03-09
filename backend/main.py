@@ -4,39 +4,119 @@ import re
 import json
 import time
 import shutil
+import sqlite3
 import threading
+import urllib.request
+import gdown
 from io import BytesIO
 from collections import defaultdict
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import torch
 import torchvision.transforms as transforms
 from torchvision import models
 from torch import nn
 from PIL import Image
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=Path(__file__).parent / ".env", override=True)
 
-# ── Cargar modelo al inicio ────────────────────────────────────────────────────
+# ── Rutas ──────────────────────────────────────────────────────────────────────
 MODEL_DIR      = Path(__file__).parent / "model"
 MODEL_PATH     = MODEL_DIR / "resnet50_plantas.pt"
 CLASSES_PATH   = MODEL_DIR / "class_names.json"
 CACHE_PATH     = MODEL_DIR / "embeddings_cache.pt"
 FEEDBACK_DIR   = Path(__file__).parent / "feedback"
 TRAINING_DIR   = Path(__file__).parent.parent / "data" / "3 - copia"
+DB_PATH        = Path(__file__).parent / "records.db"
+DIST_DIR       = Path(__file__).parent.parent / "frontend" / "dist"
 
 model = None
 class_names = []
 
+
+# ── Descarga del modelo (para despliegue en la nube) ──────────────────────────
+MODEL_URL = os.environ.get("MODEL_URL", "")
+
+def download_model_if_needed():
+    if MODEL_PATH.exists():
+        return
+    if not MODEL_URL:
+        print("[WARN] Modelo no encontrado y MODEL_URL no configurado.")
+        return
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    print("[INFO] Descargando modelo desde Google Drive...")
+    # MODEL_URL puede ser el ID del archivo o la URL completa de Drive
+    file_id = MODEL_URL
+    if "drive.google.com" in MODEL_URL:
+        # Extraer el ID de URLs tipo: https://drive.google.com/file/d/ID/view
+        import re as _re
+        m = _re.search(r"/d/([a-zA-Z0-9_-]+)", MODEL_URL)
+        if m:
+            file_id = m.group(1)
+    gdown.download(id=file_id, output=str(MODEL_PATH), quiet=False)
+    print("[OK] Modelo descargado.")
+
+
+# ── Base de datos SQLite ───────────────────────────────────────────────────────
+def init_db():
+    con = sqlite3.connect(DB_PATH)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS records (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp         TEXT    NOT NULL,
+            departamento      TEXT,
+            municipio         TEXT,
+            vereda            TEXT,
+            latitud           REAL,
+            longitud          REAL,
+            tree_id           TEXT    NOT NULL,
+            predicted_species TEXT,
+            confidence        REAL,
+            verified_species  TEXT,
+            verification      TEXT
+        )
+    """)
+    con.commit()
+    con.close()
+
+
+def save_records(location: dict, results: list):
+    ts = time.strftime("%Y-%m-%dT%H:%M:%S")
+    con = sqlite3.connect(DB_PATH)
+    for r in results:
+        con.execute(
+            """INSERT INTO records
+               (timestamp, departamento, municipio, vereda, latitud, longitud,
+                tree_id, predicted_species, confidence)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (
+                ts,
+                location.get("departamento", ""),
+                location.get("municipio", ""),
+                location.get("vereda", ""),
+                location.get("latitud"),
+                location.get("longitud"),
+                r["tree_id"],
+                r["predicted_species"],
+                r["confidence"],
+            ),
+        )
+    con.commit()
+    con.close()
+
+
+# ── Carga del modelo ───────────────────────────────────────────────────────────
 def load_model():
     global model, class_names
 
     if not MODEL_PATH.exists() or not CLASSES_PATH.exists():
-        print("[WARN] Modelo no encontrado en backend/model/. Coloca resnet50_plantas.pt y class_names.json")
+        print("[WARN] Modelo no encontrado en backend/model/.")
         return
 
     with open(CLASSES_PATH, "r", encoding="utf-8") as f:
@@ -53,25 +133,30 @@ def load_model():
     model = net
     print(f"[OK] Modelo cargado: {num_classes} clases: {class_names}")
 
+
+download_model_if_needed()
+init_db()
 load_model()
+
 
 # ── FastAPI ────────────────────────────────────────────────────────────────────
 app = FastAPI()
+api = APIRouter(prefix="/api")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"http://localhost:\d+",
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Transform igual al de validación en Colab
 INFER_TRANSFORM = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
+
 
 # ── Utilidades ─────────────────────────────────────────────────────────────────
 def parse_tree_id(filename: str) -> str | None:
@@ -110,9 +195,16 @@ def make_thumbnail(image_bytes: bytes, size: int = 200) -> str:
     return f"data:image/jpeg;base64,{b64}"
 
 
-# ── Endpoint ───────────────────────────────────────────────────────────────────
-@app.post("/classify")
-async def classify(files: List[UploadFile] = File(...)):
+# ── Endpoint clasificación ─────────────────────────────────────────────────────
+@api.post("/classify")
+async def classify(
+    files:        List[UploadFile] = File(...),
+    departamento: str              = Form(""),
+    municipio:    str              = Form(""),
+    vereda:       str              = Form(""),
+    latitud:      Optional[float]  = Form(None),
+    longitud:     Optional[float]  = Form(None),
+):
     tree_files: dict[str, list] = defaultdict(list)
 
     for upload in files:
@@ -151,23 +243,42 @@ async def classify(files: List[UploadFile] = File(...)):
                 best_prediction = prediction
 
         results.append({
-            "tree_id":          tree_id,
+            "tree_id":           tree_id,
             "predicted_species": best_prediction["species"] if best_prediction else "No identificado",
             "confidence":        round(best_confidence * 100, 1) if best_confidence >= 0 else 0,
             "thumbnail":         thumbnail,
         })
 
+    # Guardar en base de datos
+    location = {
+        "departamento": departamento,
+        "municipio":    municipio,
+        "vereda":       vereda,
+        "latitud":      latitud,
+        "longitud":     longitud,
+    }
+    save_records(location, results)
+
     return results
 
 
-# ── Feedback ───────────────────────────────────────────────────────────────────
+# ── Registros históricos ───────────────────────────────────────────────────────
+@api.get("/records")
+async def get_records():
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    rows = con.execute("SELECT * FROM records ORDER BY timestamp DESC").fetchall()
+    con.close()
+    return [dict(r) for r in rows]
 
-@app.get("/classes")
+
+# ── Feedback ───────────────────────────────────────────────────────────────────
+@api.get("/classes")
 async def get_classes():
     return class_names
 
 
-@app.post("/feedback")
+@api.post("/feedback")
 async def save_feedback(species: str = Form(...), files: List[UploadFile] = File(...)):
     target = FEEDBACK_DIR / species
     target.mkdir(parents=True, exist_ok=True)
@@ -180,7 +291,7 @@ async def save_feedback(species: str = Form(...), files: List[UploadFile] = File
     return {"saved": saved, "species": species}
 
 
-@app.get("/feedback/stats")
+@api.get("/feedback/stats")
 async def feedback_stats():
     if not FEEDBACK_DIR.exists():
         return {"total": 0, "by_species": {}}
@@ -201,7 +312,6 @@ retrain_state = {"running": False, "message": "idle"}
 
 
 def extract_embeddings_from_dir(source_dir: Path, species_to_idx: dict, backbone, transform, aug, aug_times: int):
-    """Extrae embeddings de todas las imágenes en source_dir/{especie}/."""
     embeddings, labels = [], []
     for species_dir in source_dir.iterdir():
         if not species_dir.is_dir():
@@ -245,7 +355,6 @@ def run_finetune():
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
         ])
 
-        # ── Cargar modelo y extraer backbone ──────────────────────────────────
         net = models.resnet50(weights=None)
         net.fc = nn.Sequential(nn.Dropout(0.4), nn.Linear(net.fc.in_features, len(class_names)))
         net.load_state_dict(torch.load(MODEL_PATH, map_location="cpu"))
@@ -254,7 +363,6 @@ def run_finetune():
 
         all_embeddings, all_labels = [], []
 
-        # ── Paso 1: caché del dataset original ───────────────────────────────
         if CACHE_PATH.exists():
             retrain_state["message"] = "Cargando caché del dataset original..."
             cache = torch.load(CACHE_PATH, map_location="cpu")
@@ -289,7 +397,6 @@ def run_finetune():
         else:
             retrain_state["message"] = "Dataset original no encontrado, usando solo correcciones..."
 
-        # ── Paso 2: embeddings de correcciones (con augmentation) ────────────
         if not FEEDBACK_DIR.exists() or not any(FEEDBACK_DIR.iterdir()):
             raise ValueError("No hay correcciones guardadas aún.")
 
@@ -306,7 +413,6 @@ def run_finetune():
         species_present = len(set(all_labels))
         retrain_state["message"] = f"Entrenando con {len(all_embeddings)} muestras ({species_present} especies)..."
 
-        # ── Paso 3: entrenar FC ───────────────────────────────────────────────
         X = torch.stack(all_embeddings)
         y = torch.tensor(all_labels)
 
@@ -314,8 +420,8 @@ def run_finetune():
         for p in fc.parameters():
             p.requires_grad = True
 
-        dataset  = torch.utils.data.TensorDataset(X, y)
-        loader   = torch.utils.data.DataLoader(dataset, batch_size=64, shuffle=True)
+        dataset   = torch.utils.data.TensorDataset(X, y)
+        loader    = torch.utils.data.DataLoader(dataset, batch_size=64, shuffle=True)
         optimizer = torch.optim.Adam(fc.parameters(), lr=5e-4, weight_decay=1e-3)
         criterion = nn.CrossEntropyLoss()
 
@@ -329,7 +435,6 @@ def run_finetune():
                 loss.backward()
                 optimizer.step()
 
-        # ── Paso 4: guardar ───────────────────────────────────────────────────
         retrain_state["message"] = "Guardando modelo actualizado..."
         backup = MODEL_PATH.parent / f"resnet50_plantas_backup_{int(time.time())}.pt"
         shutil.copy(MODEL_PATH, backup)
@@ -347,7 +452,7 @@ def run_finetune():
         retrain_state = {"running": False, "message": f"Error: {str(e)}"}
 
 
-@app.post("/retrain")
+@api.post("/retrain")
 async def start_retrain():
     global retrain_state
     if retrain_state["running"]:
@@ -358,6 +463,22 @@ async def start_retrain():
     return {"status": "started"}
 
 
-@app.get("/retrain/status")
+@api.get("/retrain/status")
 async def get_retrain_status():
     return retrain_state
+
+
+# ── Registrar rutas API y servir frontend ──────────────────────────────────────
+app.include_router(api)
+
+
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str):
+    if not DIST_DIR.exists():
+        return {"error": "Frontend no compilado. Ejecuta 'npm run build' en la carpeta frontend/."}
+    # Servir archivos estáticos si existen
+    file_path = DIST_DIR / full_path
+    if file_path.is_file():
+        return FileResponse(file_path)
+    # SPA fallback: siempre devolver index.html
+    return FileResponse(DIST_DIR / "index.html")

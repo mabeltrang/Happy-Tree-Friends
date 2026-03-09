@@ -5,3 +5,5 @@ torch
 torchvision
 python-dotenv
 Pillow
+aiofiles
+gdown

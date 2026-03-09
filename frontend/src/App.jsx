@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { UploadCloud, User, X, CheckCircle, XCircle, Search, Loader2, Download, AlertCircle, BookOpen, RefreshCw } from 'lucide-react';
+import { UploadCloud, User, X, CheckCircle, XCircle, Search, Loader2, Download, AlertCircle, BookOpen, RefreshCw, MapPin, Map } from 'lucide-react';
 import JSZip from 'jszip';
 import * as XLSX from 'xlsx';
+import MapView from './MapView';
 
 function App() {
   const [files, setFiles] = useState([]);
@@ -14,6 +15,16 @@ function App() {
   const [isRetraining, setIsRetraining] = useState(false);
   const [isSavingFeedback, setIsSavingFeedback] = useState(false);
   const [knownClasses, setKnownClasses] = useState([]);
+
+  // Ubicación
+  const [departamento, setDepartamento] = useState('');
+  const [municipio, setMunicipio] = useState('');
+  const [vereda, setVereda] = useState('');
+  const [latitud, setLatitud] = useState('');
+  const [longitud, setLongitud] = useState('');
+
+  const [activeTab, setActiveTab] = useState('clasificar');
+
   const fileInputRef = useRef(null);
   const nextId = useRef(1);
   const pollRef = useRef(null);
@@ -60,12 +71,21 @@ function App() {
 
   const handleStartClassification = async () => {
     if (files.length === 0) return;
+    if (!departamento.trim() || !municipio.trim()) {
+      setError('Por favor completa el Departamento y Municipio antes de clasificar.');
+      return;
+    }
     setIsClassifying(true);
     setError(null);
     setResults([]);
 
     const formData = new FormData();
     files.forEach((entry) => formData.append('files', entry.file, entry.file.name));
+    formData.append('departamento', departamento.trim());
+    formData.append('municipio', municipio.trim());
+    formData.append('vereda', vereda.trim());
+    if (latitud !== '') formData.append('latitud', latitud);
+    if (longitud !== '') formData.append('longitud', longitud);
 
     try {
       const response = await fetch('/api/classify', { method: 'POST', body: formData });
@@ -197,9 +217,9 @@ function App() {
 
   const handleDownloadExcel = () => {
     const rows = results.map((r) => ({
-      'ID Árbol': r.tree_id,
-      'Especie Predicha': r.predicted_species,
-      'Confianza (%)': r.confidence,
+      'ID Árbol':              r.tree_id,
+      'Especie Predicha':      r.predicted_species,
+      'Confianza (%)':         r.confidence,
       'Especie Validada':
         r.verification === 'confirmed'
           ? r.predicted_species
@@ -212,6 +232,11 @@ function App() {
           : r.verification === 'rejected'
           ? 'Negado'
           : 'Sin verificar',
+      'Departamento': departamento,
+      'Municipio':    municipio,
+      'Vereda':       vereda,
+      'Latitud':      latitud !== '' ? parseFloat(latitud) : '',
+      'Longitud':     longitud !== '' ? parseFloat(longitud) : '',
     }));
 
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -254,18 +279,130 @@ function App() {
 
         {/* Main Content */}
         <main className="flex-1 max-w-7xl w-full mx-auto p-6 flex flex-col min-h-0">
-          <div className="bg-white/90 rounded-lg px-5 py-3 shadow-sm mb-6 border border-unergy-green text-center">
+          <div className="bg-white/90 rounded-lg px-5 py-3 shadow-sm mb-4 border border-unergy-green text-center">
             <h1 className="text-3xl font-bold text-gray-800">
               Happy Tree Friends - Clasificación Automatizada
             </h1>
           </div>
 
+          {/* Pestañas */}
+          <div className="flex gap-2 mb-4">
+            <button
+              onClick={() => setActiveTab('clasificar')}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition-all shadow-sm
+                ${activeTab === 'clasificar'
+                  ? 'bg-unergy-green text-white'
+                  : 'bg-white/90 text-gray-600 hover:bg-white border border-gray-200'
+                }`}
+            >
+              <Search className="h-4 w-4" />
+              Clasificación
+            </button>
+            <button
+              onClick={() => setActiveTab('mapa')}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition-all shadow-sm
+                ${activeTab === 'mapa'
+                  ? 'bg-unergy-green text-white'
+                  : 'bg-white/90 text-gray-600 hover:bg-white border border-gray-200'
+                }`}
+            >
+              <Map className="h-4 w-4" />
+              Mapa de Distribución
+            </button>
+          </div>
+
+          {activeTab === 'mapa' ? (
+            <MapView />
+          ) : (
           <div className="flex flex-col lg:flex-row gap-6 flex-1">
             {/* Left Column - Upload */}
             <div className="flex-1 min-w-0 flex flex-col gap-4">
+
+              {/* Sección 1: Ubicación */}
               <div className="bg-white/90 rounded-lg px-4 py-2 shadow-sm inline-block border border-unergy-green">
                 <h2 className="text-lg font-medium text-gray-700">
-                  1. Cargar Imágenes del Inventario
+                  1. Ubicación de las fotos
+                </h2>
+              </div>
+
+              <div className="bg-white rounded-lg p-4 shadow-sm border border-unergy-green">
+                <div className="flex items-center gap-2 mb-3 text-sm text-gray-500">
+                  <MapPin className="h-4 w-4 text-unergy-green" />
+                  <span>Indica de dónde son las fotos de este lote</span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      Departamento <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={departamento}
+                      onChange={(e) => setDepartamento(e.target.value)}
+                      placeholder="Ej: Cundinamarca"
+                      className="w-full text-sm rounded-md px-3 py-2 border border-gray-300 focus:outline-none focus:border-unergy-green text-gray-700 placeholder-gray-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      Municipio <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={municipio}
+                      onChange={(e) => setMunicipio(e.target.value)}
+                      placeholder="Ej: Zipaquirá"
+                      className="w-full text-sm rounded-md px-3 py-2 border border-gray-300 focus:outline-none focus:border-unergy-green text-gray-700 placeholder-gray-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      Vereda / Localidad <span className="text-gray-400 font-normal">(opcional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={vereda}
+                      onChange={(e) => setVereda(e.target.value)}
+                      placeholder="Ej: Vereda El Rosal"
+                      className="w-full text-sm rounded-md px-3 py-2 border border-gray-300 focus:outline-none focus:border-unergy-green text-gray-700 placeholder-gray-400"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">
+                        Latitud <span className="text-gray-400 font-normal">(opcional)</span>
+                      </label>
+                      <input
+                        type="number"
+                        step="any"
+                        value={latitud}
+                        onChange={(e) => setLatitud(e.target.value)}
+                        placeholder="4.7110"
+                        className="w-full text-sm rounded-md px-3 py-2 border border-gray-300 focus:outline-none focus:border-unergy-green text-gray-700 placeholder-gray-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">
+                        Longitud <span className="text-gray-400 font-normal">(opcional)</span>
+                      </label>
+                      <input
+                        type="number"
+                        step="any"
+                        value={longitud}
+                        onChange={(e) => setLongitud(e.target.value)}
+                        placeholder="-74.0721"
+                        className="w-full text-sm rounded-md px-3 py-2 border border-gray-300 focus:outline-none focus:border-unergy-green text-gray-700 placeholder-gray-400"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Sección 2: Cargar imágenes */}
+              <div className="bg-white/90 rounded-lg px-4 py-2 shadow-sm inline-block border border-unergy-green">
+                <h2 className="text-lg font-medium text-gray-700">
+                  2. Cargar Imágenes del Inventario
                 </h2>
               </div>
 
@@ -370,7 +507,7 @@ function App() {
             <div className="w-full lg:w-[450px] xl:w-[500px] flex flex-col gap-4">
               <div className="bg-white/90 rounded-lg px-4 py-2 shadow-sm inline-block border border-unergy-green">
                 <h2 className="text-lg font-medium text-gray-700">
-                  2. Resultados de la Identificación
+                  3. Resultados de la Identificación
                 </h2>
               </div>
 
@@ -382,7 +519,7 @@ function App() {
                       <Loader2 className="h-8 w-8 text-gray-400 animate-spin" />
                     </div>
                     <p className="text-gray-600 font-medium mb-2">
-                      Sube imágenes y haz clic en Iniciar para<br />ver los resultados...
+                      Completa la ubicación, sube imágenes<br />y haz clic en Iniciar para ver los resultados...
                     </p>
                     <div className="flex items-center gap-2 text-gray-400 text-sm mt-4">
                       <div className="h-1.5 w-1.5 bg-gray-400 rounded-full animate-bounce" />
@@ -392,6 +529,19 @@ function App() {
                 ) : (
                   /* Results list */
                   <div className="flex flex-col h-full">
+                    {/* Location badge */}
+                    {(departamento || municipio) && (
+                      <div className="px-3 pt-3">
+                        <div className="flex items-center gap-1.5 text-xs text-unergy-green bg-green-50 border border-green-200 rounded-md px-2 py-1.5">
+                          <MapPin className="h-3 w-3 flex-none" />
+                          <span className="font-medium truncate">
+                            {[vereda, municipio, departamento].filter(Boolean).join(', ')}
+                            {latitud && longitud ? ` · ${parseFloat(latitud).toFixed(4)}, ${parseFloat(longitud).toFixed(4)}` : ''}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="flex-1 overflow-y-auto p-3 space-y-2">
                       {results.map((r) => (
                         <div
@@ -484,7 +634,7 @@ function App() {
                       ))}
                     </div>
 
-                    {/* Download button */}
+                    {/* Actions */}
                     <div className="p-3 border-t border-gray-300 flex flex-col gap-2">
                       <button
                         onClick={handleDownloadExcel}
@@ -554,6 +704,7 @@ function App() {
               </div>
             </div>
           </div>
+          )} {/* fin condicional pestañas */}
         </main>
       </div>
     </div>

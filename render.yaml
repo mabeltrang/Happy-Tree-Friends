@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: happy-tree-friends
+    env: python
+    region: oregon
+    plan: free
+    buildCommand: |
+      pip install -r backend/requirements.txt &&
+      cd frontend && npm install && npm run build
+    startCommand: cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: MODEL_URL
+        sync: false   # Lo pones a mano en el dashboard de Render
+    disk:
+      name: data
+      mountPath: /opt/render/project/src/backend
+      sizeGB: 1
