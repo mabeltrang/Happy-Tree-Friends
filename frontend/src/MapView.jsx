@@ -26,20 +26,20 @@ function MapView() {
   }, []);
 
   const speciesColorMap = useMemo(() => {
-    const allSpecies = [...new Set(records.map(r => r.predicted_species).filter(Boolean))];
+    const allSpecies = [...new Set(records.map(r => r.species).filter(Boolean))];
     const map = {};
     allSpecies.forEach((s, i) => { map[s] = SPECIES_COLORS[i % SPECIES_COLORS.length]; });
     return map;
   }, [records]);
 
   const filtered = useMemo(() => (
-    selectedSpecies === 'all' ? records : records.filter(r => r.predicted_species === selectedSpecies)
+    selectedSpecies === 'all' ? records : records.filter(r => r.species === selectedSpecies)
   ), [records, selectedSpecies]);
 
   const withCoords    = filtered.filter(r => r.latitud != null && r.longitud != null);
   const withoutCoords = filtered.filter(r => r.latitud == null || r.longitud == null);
 
-  const uniqueSpecies = [...new Set(records.map(r => r.predicted_species).filter(Boolean))];
+  const uniqueSpecies = [...new Set(records.map(r => r.species).filter(Boolean))];
   const uniqueDepts   = [...new Set(filtered.map(r => r.departamento).filter(Boolean))];
   const uniqueMunis   = [...new Set(filtered.map(r => r.municipio).filter(Boolean))];
 
@@ -47,7 +47,7 @@ function MapView() {
   const speciesCounts = useMemo(() => {
     const counts = {};
     filtered.forEach(r => {
-      if (r.predicted_species) counts[r.predicted_species] = (counts[r.predicted_species] || 0) + 1;
+      if (r.species) counts[r.species] = (counts[r.species] || 0) + 1;
     });
     return Object.entries(counts).sort((a, b) => b[1] - a[1]);
   }, [filtered]);
@@ -216,20 +216,20 @@ function MapView() {
                 pathOptions={{
                   color: '#fff',
                   weight: 1.5,
-                  fillColor: speciesColorMap[r.predicted_species] || '#006B33',
+                  fillColor: speciesColorMap[r.species] || '#006B33',
                   fillOpacity: 0.9,
                 }}
               >
                 <Popup>
                   <div style={{ minWidth: '160px' }}>
-                    <p style={{ fontWeight: 'bold', marginBottom: '2px' }}>{r.predicted_species}</p>
+                    <p style={{ fontWeight: 'bold', marginBottom: '2px' }}>{r.species}</p>
                     <p style={{ color: '#666', fontSize: '11px' }}>Árbol #{r.tree_id} · {r.confidence}% confianza</p>
                     <hr style={{ margin: '6px 0' }} />
                     <p style={{ fontSize: '12px' }}>
                       {[r.vereda, r.municipio, r.departamento].filter(Boolean).join(', ')}
                     </p>
                     <p style={{ color: '#999', fontSize: '11px', marginTop: '2px' }}>
-                      {r.timestamp?.slice(0, 10)}
+                      {r.created_at?.slice(0, 10)}
                     </p>
                   </div>
                 </Popup>
