@@ -185,7 +185,7 @@ function App() {
         r.verification === 'confirmed' ? r.predicted_species
         : r.verification === 'rejected' && r.correction?.trim() ? r.correction.trim()
         : 'No determinado';
-      const info = speciesInfo[validatedSpecies] ?? {};
+      const info = speciesInfo[validatedSpecies] ?? speciesInfo[r.predicted_species] ?? {};
       return {
         'ID Árbol':               r.tree_id,
         'Especie Predicha':       r.predicted_species,
