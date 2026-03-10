@@ -7,3 +7,4 @@ python-dotenv
 Pillow
 aiofiles
 gdown
+psycopg2-binary

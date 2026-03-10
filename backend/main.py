@@ -6,6 +6,7 @@ import time
 import shutil
 import threading
 import sqlite3
+from contextlib import contextmanager
 from io import BytesIO
 from collections import defaultdict
 from pathlib import Path
@@ -31,6 +32,7 @@ CACHE_PATH   = MODEL_DIR / "embeddings_cache.pt"
 FEEDBACK_DIR = Path(__file__).parent / "feedback"
 TRAINING_DIR = Path(__file__).parent.parent / "data" / "3 - copia"
 DB_PATH      = Path(os.getenv("DATA_DIR", Path(__file__).parent)) / "records.db"
+DATABASE_URL = os.getenv("DATABASE_URL")  # PostgreSQL en Railway; si no, usa SQLite
 
 MODEL_URL        = os.getenv("MODEL_URL")
 SPECIES_INFO_PATH = MODEL_DIR / "species_info.json"
@@ -58,40 +60,80 @@ def download_model_if_needed():
 
 download_model_if_needed()
 
-# ── Base de datos SQLite ───────────────────────────────────────────────────────
+# ── Base de datos (PostgreSQL en Railway, SQLite en local) ─────────────────────
+USE_PG = bool(DATABASE_URL)
+
+@contextmanager
+def get_db():
+    if USE_PG:
+        import psycopg2, psycopg2.extras
+        con = psycopg2.connect(DATABASE_URL)
+        try:
+            yield con, "%s"
+            con.commit()
+        finally:
+            con.close()
+    else:
+        con = sqlite3.connect(DB_PATH)
+        con.row_factory = sqlite3.Row
+        try:
+            yield con, "?"
+        finally:
+            con.commit()
+            con.close()
+
 def init_db():
-    con = sqlite3.connect(DB_PATH)
-    con.execute("""
-        CREATE TABLE IF NOT EXISTS classifications (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            created_at    TEXT    NOT NULL,
-            tree_id       TEXT    NOT NULL,
-            species       TEXT    NOT NULL,
-            confidence    REAL    NOT NULL,
-            departamento  TEXT,
-            municipio     TEXT,
-            vereda        TEXT,
-            latitud       REAL,
-            longitud      REAL
-        )
-    """)
-    con.commit()
-    con.close()
+    if USE_PG:
+        import psycopg2
+        con = psycopg2.connect(DATABASE_URL)
+        con.cursor().execute("""
+            CREATE TABLE IF NOT EXISTS classifications (
+                id            SERIAL PRIMARY KEY,
+                created_at    TEXT   NOT NULL,
+                tree_id       TEXT   NOT NULL,
+                species       TEXT   NOT NULL,
+                confidence    REAL   NOT NULL,
+                departamento  TEXT,
+                municipio     TEXT,
+                vereda        TEXT,
+                latitud       REAL,
+                longitud      REAL
+            )
+        """)
+        con.commit()
+        con.close()
+    else:
+        con = sqlite3.connect(DB_PATH)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS classifications (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at    TEXT    NOT NULL,
+                tree_id       TEXT    NOT NULL,
+                species       TEXT    NOT NULL,
+                confidence    REAL    NOT NULL,
+                departamento  TEXT,
+                municipio     TEXT,
+                vereda        TEXT,
+                latitud       REAL,
+                longitud      REAL
+            )
+        """)
+        con.commit()
+        con.close()
 
 init_db()
 
 def save_records(results, departamento, municipio, vereda, latitud, longitud):
-    con = sqlite3.connect(DB_PATH)
     ts = time.strftime("%Y-%m-%dT%H:%M:%S")
-    for r in results:
-        con.execute("""
-            INSERT INTO classifications
-              (created_at, tree_id, species, confidence, departamento, municipio, vereda, latitud, longitud)
-            VALUES (?,?,?,?,?,?,?,?,?)
-        """, (ts, r["tree_id"], r["predicted_species"], r["confidence"],
-              departamento, municipio, vereda, latitud, longitud))
-    con.commit()
-    con.close()
+    with get_db() as (con, ph):
+        cur = con.cursor()
+        for r in results:
+            cur.execute(f"""
+                INSERT INTO classifications
+                  (created_at, tree_id, species, confidence, departamento, municipio, vereda, latitud, longitud)
+                VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph})
+            """, (ts, r["tree_id"], r["predicted_species"], r["confidence"],
+                  departamento, municipio, vereda, latitud, longitud))
 
 # ── Cargar modelo ──────────────────────────────────────────────────────────────
 model = None
@@ -214,11 +256,20 @@ async def classify(
 
 @app.get("/api/records")
 async def get_records():
-    con = sqlite3.connect(DB_PATH)
-    con.row_factory = sqlite3.Row
-    rows = con.execute("SELECT * FROM classifications ORDER BY created_at DESC").fetchall()
-    con.close()
-    return [dict(r) for r in rows]
+    if USE_PG:
+        import psycopg2.extras
+        con = psycopg2.connect(DATABASE_URL)
+        cur = con.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM classifications ORDER BY created_at DESC")
+        rows = cur.fetchall()
+        con.close()
+        return [dict(r) for r in rows]
+    else:
+        con = sqlite3.connect(DB_PATH)
+        con.row_factory = sqlite3.Row
+        rows = con.execute("SELECT * FROM classifications ORDER BY created_at DESC").fetchall()
+        con.close()
+        return [dict(r) for r in rows]
 
 
 @app.get("/api/classes")
