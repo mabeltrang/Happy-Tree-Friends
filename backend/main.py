@@ -228,13 +228,12 @@ async def classify(
     results = []
     for tree_id, photos in sorted(tree_files.items(), key=lambda x: sort_key(x[0])):
         best_prediction, best_confidence, thumbnail = None, -1.0, None
-        for i, photo in enumerate(photos):
-            if i == 0:
-                thumbnail = make_thumbnail(photo["content"])
+        for photo in photos:
             prediction = classify_image(photo["content"])
             if prediction and prediction["confidence"] > best_confidence:
                 best_confidence = prediction["confidence"]
                 best_prediction = prediction
+                thumbnail = make_thumbnail(photo["content"])
         below_threshold = best_prediction is None or best_confidence < CONFIDENCE_THRESHOLD
         results.append({
             "tree_id":           tree_id,

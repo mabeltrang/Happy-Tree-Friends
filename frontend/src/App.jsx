@@ -445,7 +445,7 @@ function App() {
                               : r.verification === 'rejected' ? 'border-red-300 bg-red-50/50'
                               : 'border-gray-200'}`}
                         >
-                          <div className="flex-none w-14 h-14 rounded-md overflow-hidden border border-gray-200 bg-gray-100">
+                          <div className="flex-none w-28 h-28 rounded-md overflow-hidden border border-gray-200 bg-gray-100">
                             {r.thumbnail
                               ? <img src={r.thumbnail} alt={`Árbol ${r.tree_id}`} className="w-full h-full object-cover" />
                               : <div className="w-full h-full flex items-center justify-center text-gray-300 text-xs">Sin foto</div>
