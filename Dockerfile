@@ -8,12 +8,12 @@ RUN npm run build
 # ── Build backend + serve todo ─────────────────────────────────────────────────
 FROM python:3.11-slim
 WORKDIR /app
-ARG CACHE_BUST=3
+ARG CACHE_BUST=4
 RUN apt-get update && apt-get install -y wget && \
     mkdir -p backend/model && \
-    wget -O backend/model/resnet50_plantas.pt \
+    wget --no-cache -O backend/model/resnet50_plantas.pt \
     "https://huggingface.co/mabeltrang/happy-tree-friends-model/resolve/main/modelo.pt" && \
-    wget -O backend/model/class_names.json \
+    wget --no-cache -O backend/model/class_names.json \
     "https://huggingface.co/mabeltrang/happy-tree-friends-model/resolve/main/class_names.json"
 # Instalar PyTorch CPU-only (mucho más liviano)
 RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
