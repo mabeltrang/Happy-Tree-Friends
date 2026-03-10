@@ -130,6 +130,8 @@ INFER_TRANSFORM = transforms.Compose([
     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
+CONFIDENCE_THRESHOLD = 0.60  # Si la confianza es menor a esto, no se puede determinar la especie
+
 # ── Utilidades ─────────────────────────────────────────────────────────────────
 def parse_tree_id(filename: str) -> str | None:
     name = filename.rsplit(".", 1)[0]
@@ -190,9 +192,10 @@ async def classify(
             if prediction and prediction["confidence"] > best_confidence:
                 best_confidence = prediction["confidence"]
                 best_prediction = prediction
+        below_threshold = best_prediction is None or best_confidence < CONFIDENCE_THRESHOLD
         results.append({
             "tree_id":           tree_id,
-            "predicted_species": best_prediction["species"] if best_prediction else "No identificado",
+            "predicted_species": "No determinado" if below_threshold else best_prediction["species"],
             "confidence":        round(best_confidence * 100, 1) if best_confidence >= 0 else 0,
             "thumbnail":         thumbnail,
             "departamento":      departamento,
