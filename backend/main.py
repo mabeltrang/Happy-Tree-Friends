@@ -38,18 +38,25 @@ MODEL_URL        = os.getenv("MODEL_URL")
 SPECIES_INFO_PATH = MODEL_DIR / "species_info.json"
 
 def download_model_if_needed():
-    import urllib.request
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    print("[INFO] Descargando modelo y clases desde HuggingFace...")
-    urllib.request.urlretrieve(
-        "https://huggingface.co/mabeltrang/happy-tree-friends-model/resolve/main/modelo.pt",
-        MODEL_PATH
-    )
-    urllib.request.urlretrieve(
-        "https://huggingface.co/mabeltrang/happy-tree-friends-model/resolve/main/class_names.json",
-        CLASSES_PATH
-    )
-    print("[OK] Modelo y clases descargados.")
+    if MODEL_PATH.exists():
+        print("[OK] Modelo ya existe, no se descarga.")
+    elif not MODEL_URL:
+        print("[WARN] MODEL_URL no configurado y modelo no encontrado.")
+        return
+    else:
+        print(f"[INFO] Descargando modelo desde {MODEL_URL} ...")
+        if "drive.google.com" in MODEL_URL or ("/" not in MODEL_URL and len(MODEL_URL) > 20):
+            import gdown, re as _re
+            file_id = MODEL_URL
+            m = _re.search(r"/d/([a-zA-Z0-9_-]+)", MODEL_URL)
+            if m:
+                file_id = m.group(1)
+            gdown.download(id=file_id, output=str(MODEL_PATH), quiet=False)
+        else:
+            import urllib.request
+            urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+        print("[OK] Modelo descargado.")
 
     # Descargar class_names.json si no existe
     if not CLASSES_PATH.exists():
