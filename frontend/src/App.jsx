@@ -8,6 +8,7 @@ function App() {
   const [files, setFiles] = useState([]);
   const [results, setResults] = useState([]);
   const [isClassifying, setIsClassifying] = useState(false);
+  const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
   const [isDragActive, setIsDragActive] = useState(false);
   const [error, setError] = useState(null);
   const [feedbackStats, setFeedbackStats] = useState({ total: 0, by_species: {} });
@@ -61,32 +62,59 @@ function App() {
   // --- Classification ---
   const locationReady = departamento.trim() && municipio.trim();
 
+  const BATCH_SIZE = 30;
+
   const handleStartClassification = async () => {
     if (files.length === 0 || !locationReady) return;
     setIsClassifying(true);
     setError(null);
     setResults([]);
 
-    const formData = new FormData();
-    files.forEach((entry) => formData.append('files', entry.file, entry.file.name));
-    formData.append('departamento', departamento.trim());
-    formData.append('municipio',    municipio.trim());
-    formData.append('vereda',       vereda.trim());
-    if (latitud)  formData.append('latitud',  latitud);
-    if (longitud) formData.append('longitud', longitud);
-
-    try {
-      const response = await fetch('/api/classify', { method: 'POST', body: formData });
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({ detail: 'Error desconocido del servidor.' }));
-        throw new Error(err.detail || `Error ${response.status}`);
+    // Agrupar archivos por árbol
+    const treeMap = {};
+    files.forEach((entry) => {
+      const name = entry.file.name.replace(/\.[^.]+$/, '');
+      const match = name.match(/^(\w+)-\d+$/);
+      const treeId = match ? match[1] : null;
+      if (treeId) {
+        if (!treeMap[treeId]) treeMap[treeId] = [];
+        treeMap[treeId].push(entry);
       }
-      const data = await response.json();
-      setResults(data.map((r) => ({ ...r, verification: null })));
+    });
+
+    const treeIds = Object.keys(treeMap);
+    const totalBatches = Math.ceil(treeIds.length / BATCH_SIZE);
+    setBatchProgress({ current: 0, total: totalBatches });
+
+    const allResults = [];
+    try {
+      for (let i = 0; i < treeIds.length; i += BATCH_SIZE) {
+        const batchIds = treeIds.slice(i, i + BATCH_SIZE);
+        const formData = new FormData();
+        batchIds.forEach((id) => {
+          treeMap[id].forEach((entry) => formData.append('files', entry.file, entry.file.name));
+        });
+        formData.append('departamento', departamento.trim());
+        formData.append('municipio',    municipio.trim());
+        formData.append('vereda',       vereda.trim());
+        if (latitud)  formData.append('latitud',  latitud);
+        if (longitud) formData.append('longitud', longitud);
+
+        const response = await fetch('/api/classify', { method: 'POST', body: formData });
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({ detail: 'Error desconocido del servidor.' }));
+          throw new Error(err.detail || `Error ${response.status}`);
+        }
+        const data = await response.json();
+        allResults.push(...data);
+        setBatchProgress({ current: Math.floor(i / BATCH_SIZE) + 1, total: totalBatches });
+        setResults(allResults.map((r) => ({ ...r, verification: null })));
+      }
     } catch (e) {
       setError(e.message);
     } finally {
       setIsClassifying(false);
+      setBatchProgress({ current: 0, total: 0 });
     }
   };
 
@@ -397,7 +425,12 @@ function App() {
                     ${files.length === 0 || isClassifying || !locationReady ? 'bg-gray-400 cursor-not-allowed' : 'bg-unergy-green hover:bg-unergy-dark'}`}
                 >
                   {isClassifying ? (
-                    <><Loader2 className="h-5 w-5 animate-spin" /><span>Procesando lote...</span></>
+                    <><Loader2 className="h-5 w-5 animate-spin" />
+                    <span>
+                      {batchProgress.total > 1
+                        ? `Procesando lote ${batchProgress.current + 1} de ${batchProgress.total}...`
+                        : 'Procesando lote...'}
+                    </span></>
                   ) : (
                     <><Search className="h-4 w-4" /><span>Iniciar Clasificación Automática</span></>
                   )}
