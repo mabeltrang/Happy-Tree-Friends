@@ -36,8 +36,8 @@ function MapView() {
     selectedSpecies === 'all' ? records : records.filter(r => r.species === selectedSpecies)
   ), [records, selectedSpecies]);
 
-  const withCoords    = filtered.filter(r => r.latitud != null && r.longitud != null);
-  const withoutCoords = filtered.filter(r => r.latitud == null || r.longitud == null);
+  const withCoords    = records.filter(r => r.latitud != null && r.longitud != null);
+  const withoutCoords = records.filter(r => r.latitud == null || r.longitud == null);
 
   const uniqueSpecies = [...new Set(records.map(r => r.species).filter(Boolean))];
   const uniqueDepts   = [...new Set(filtered.map(r => r.departamento).filter(Boolean))];
