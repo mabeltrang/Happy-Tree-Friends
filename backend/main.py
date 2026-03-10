@@ -30,7 +30,7 @@ CLASSES_PATH = MODEL_DIR / "class_names.json"
 CACHE_PATH   = MODEL_DIR / "embeddings_cache.pt"
 FEEDBACK_DIR = Path(__file__).parent / "feedback"
 TRAINING_DIR = Path(__file__).parent.parent / "data" / "3 - copia"
-DB_PATH      = Path(__file__).parent / "records.db"
+DB_PATH      = Path(os.getenv("DATA_DIR", Path(__file__).parent)) / "records.db"
 
 MODEL_URL        = os.getenv("MODEL_URL")
 SPECIES_INFO_PATH = MODEL_DIR / "species_info.json"
