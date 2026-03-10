@@ -1,0 +1,9 @@
+{
+  "Acacia mangium": {"common_name": "Acacia", "family": "Fabaceae"},
+  "Azadirachta indica": {"common_name": "Neem", "family": "Meliaceae"},
+  "Crescentia cujete": {"common_name": "Totumo", "family": "Bignoniaceae"},
+  "Guazuma ulmifolia": {"common_name": "Guácimo", "family": "Malvaceae"},
+  "Handroanthus Chrysanthus": {"common_name": "Guayacán amarillo", "family": "Bignoniaceae"},
+  "Samanea saman": {"common_name": "Samán", "family": "Fabaceae"},
+  "Sterculia apetala": {"common_name": "Camajón", "family": "Malvaceae"}
+}

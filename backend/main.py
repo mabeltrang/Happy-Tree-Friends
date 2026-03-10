@@ -32,7 +32,8 @@ FEEDBACK_DIR = Path(__file__).parent / "feedback"
 TRAINING_DIR = Path(__file__).parent.parent / "data" / "3 - copia"
 DB_PATH      = Path(__file__).parent / "records.db"
 
-MODEL_URL = os.getenv("MODEL_URL")
+MODEL_URL        = os.getenv("MODEL_URL")
+SPECIES_INFO_PATH = MODEL_DIR / "species_info.json"
 
 def download_model_if_needed():
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
@@ -223,6 +224,55 @@ async def get_records():
 @app.get("/api/classes")
 async def get_classes():
     return class_names
+
+
+def _load_species_info() -> dict:
+    if SPECIES_INFO_PATH.exists():
+        with open(SPECIES_INFO_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+def _save_species_info(data: dict):
+    with open(SPECIES_INFO_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+def _lookup_gbif(species_name: str) -> dict:
+    """Consulta GBIF para obtener familia y nombre común de una especie."""
+    try:
+        import urllib.request as _ur
+        import urllib.parse as _up
+        query = _up.urlencode({"name": species_name, "verbose": "false"})
+        with _ur.urlopen(f"https://api.gbif.org/v1/species/match?{query}", timeout=10) as r:
+            data = json.loads(r.read())
+        family    = data.get("family", "")
+        usage_key = data.get("usageKey")
+        common_name = ""
+        if usage_key:
+            with _ur.urlopen(
+                f"https://api.gbif.org/v1/species/{usage_key}/vernacularNames?limit=30",
+                timeout=10
+            ) as r:
+                vn = json.loads(r.read()).get("results", [])
+            es = [n["vernacularName"] for n in vn if n.get("language") == "spa"]
+            en = [n["vernacularName"] for n in vn if n.get("language") == "eng"]
+            common_name = es[0] if es else (en[0] if en else "")
+        return {"common_name": common_name, "family": family}
+    except Exception as e:
+        print(f"[WARN] GBIF lookup falló para '{species_name}': {e}")
+        return {"common_name": "", "family": ""}
+
+@app.get("/api/species-info")
+async def get_species_info():
+    info    = _load_species_info()
+    updated = False
+    for species in class_names:
+        if species not in info:
+            print(f"[INFO] Consultando GBIF para: {species}")
+            info[species] = _lookup_gbif(species)
+            updated = True
+    if updated:
+        _save_species_info(info)
+    return info
 
 
 @app.post("/api/feedback")

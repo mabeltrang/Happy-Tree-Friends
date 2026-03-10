@@ -15,6 +15,7 @@ function App() {
   const [isRetraining, setIsRetraining] = useState(false);
   const [isSavingFeedback, setIsSavingFeedback] = useState(false);
   const [knownClasses, setKnownClasses] = useState([]);
+  const [speciesInfo, setSpeciesInfo]   = useState({});
 
   // ── Campos de ubicación ──
   const [departamento, setDepartamento] = useState('');
@@ -118,6 +119,7 @@ function App() {
   useEffect(() => {
     fetchFeedbackStats();
     fetch('/api/classes').then(r => r.ok ? r.json() : []).then(d => setKnownClasses(Array.isArray(d) ? d : [])).catch(() => {});
+    fetch('/api/species-info').then(r => r.ok ? r.json() : {}).then(d => setSpeciesInfo(d ?? {})).catch(() => {});
   }, []);
 
   const isKnownSpecies = (name) => {
@@ -176,26 +178,32 @@ function App() {
     }, 1500);
   };
 
-  // --- Excel export (incluye ubicación) ---
+  // --- Excel export (incluye ubicación, nombre común y familia) ---
   const handleDownloadExcel = () => {
-    const rows = results.map((r) => ({
-      'ID Árbol':               r.tree_id,
-      'Especie Predicha':       r.predicted_species,
-      'Confianza (%)':          r.confidence,
-      'Especie Validada':
+    const rows = results.map((r) => {
+      const validatedSpecies =
         r.verification === 'confirmed' ? r.predicted_species
         : r.verification === 'rejected' && r.correction?.trim() ? r.correction.trim()
-        : 'No identificado',
-      'Estado de Verificación':
-        r.verification === 'confirmed' ? 'Confirmado'
-        : r.verification === 'rejected' ? 'Negado'
-        : 'Sin verificar',
-      'Departamento': r.departamento || departamento,
-      'Municipio':    r.municipio    || municipio,
-      'Vereda':       r.vereda       || vereda,
-      'Latitud':      r.latitud      ?? latitud,
-      'Longitud':     r.longitud     ?? longitud,
-    }));
+        : 'No determinado';
+      const info = speciesInfo[validatedSpecies] ?? {};
+      return {
+        'ID Árbol':               r.tree_id,
+        'Especie Predicha':       r.predicted_species,
+        'Confianza (%)':          r.confidence,
+        'Especie Validada':       validatedSpecies,
+        'Nombre Común':           info.common_name ?? '',
+        'Familia':                info.family      ?? '',
+        'Estado de Verificación':
+          r.verification === 'confirmed' ? 'Confirmado'
+          : r.verification === 'rejected' ? 'Negado'
+          : 'Sin verificar',
+        'Departamento': r.departamento || departamento,
+        'Municipio':    r.municipio    || municipio,
+        'Vereda':       r.vereda       || vereda,
+        'Latitud':      r.latitud      ?? latitud,
+        'Longitud':     r.longitud     ?? longitud,
+      };
+    });
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Identificación');
