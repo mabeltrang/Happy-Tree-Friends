@@ -41,22 +41,32 @@ def download_model_if_needed():
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     if MODEL_PATH.exists():
         print("[OK] Modelo ya existe, no se descarga.")
-        return
-    if not MODEL_URL:
+    elif not MODEL_URL:
         print("[WARN] MODEL_URL no configurado y modelo no encontrado.")
         return
-    print(f"[INFO] Descargando modelo desde {MODEL_URL} ...")
-    if "drive.google.com" in MODEL_URL or ("/" not in MODEL_URL and len(MODEL_URL) > 20):
-        import gdown, re as _re
-        file_id = MODEL_URL
-        m = _re.search(r"/d/([a-zA-Z0-9_-]+)", MODEL_URL)
-        if m:
-            file_id = m.group(1)
-        gdown.download(id=file_id, output=str(MODEL_PATH), quiet=False)
     else:
+        print(f"[INFO] Descargando modelo desde {MODEL_URL} ...")
+        if "drive.google.com" in MODEL_URL or ("/" not in MODEL_URL and len(MODEL_URL) > 20):
+            import gdown, re as _re
+            file_id = MODEL_URL
+            m = _re.search(r"/d/([a-zA-Z0-9_-]+)", MODEL_URL)
+            if m:
+                file_id = m.group(1)
+            gdown.download(id=file_id, output=str(MODEL_PATH), quiet=False)
+        else:
+            import urllib.request
+            urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+        print("[OK] Modelo descargado.")
+
+    # Descargar class_names.json si no existe
+    if not CLASSES_PATH.exists():
+        print("[INFO] Descargando class_names.json ...")
         import urllib.request
-        urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
-    print("[OK] Modelo descargado.")
+        classes_url = "https://huggingface.co/mabeltrang/happy-tree-friends-model/resolve/main/class_names.json"
+        urllib.request.urlretrieve(classes_url, CLASSES_PATH)
+        print("[OK] class_names.json descargado.")
+    else:
+        print("[OK] class_names.json ya existe.")
 
 download_model_if_needed()
 
@@ -173,7 +183,7 @@ INFER_TRANSFORM = transforms.Compose([
     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
-CONFIDENCE_THRESHOLD = 0.60  # Si la confianza es menor a esto, no se puede determinar la especie
+CONFIDENCE_THRESHOLD = 0.60
 
 # ── Utilidades ─────────────────────────────────────────────────────────────────
 def parse_tree_id(filename: str) -> str | None:
@@ -247,9 +257,7 @@ async def classify(
             "longitud":          longitud,
         })
 
-    # Guardar en base de datos
     save_records(results, departamento, municipio, vereda, latitud, longitud)
-
     return results
 
 
@@ -287,7 +295,6 @@ def _save_species_info(data: dict):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 def _lookup_gbif(species_name: str) -> dict:
-    """Consulta GBIF para obtener familia y nombre común de una especie."""
     try:
         import urllib.request as _ur
         import urllib.parse as _up
