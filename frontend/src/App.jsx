@@ -259,7 +259,7 @@ function App() {
           </div>
 
           {activeTab === 'mapa' ? <MapView /> : (
-          <div className="flex flex-col lg:flex-row gap-6 flex-1">
+          <div className="flex flex-col lg:flex-row gap-6 flex-1 lg:items-start">
             {/* Left Column */}
             <div className="flex-1 min-w-0 flex flex-col gap-4">
 
@@ -339,7 +339,7 @@ function App() {
                 <h2 className="text-lg font-medium text-gray-700">1. Cargar Imágenes del Inventario</h2>
               </div>
 
-              <div className="bg-white rounded-lg p-4 shadow-sm border border-unergy-green flex flex-col h-full gap-4">
+              <div className="bg-white rounded-lg p-4 shadow-sm border border-unergy-green flex flex-col gap-4">
                 <div
                   className={`flex-1 border-2 border-dashed rounded-lg flex flex-col items-center justify-center p-8 transition-colors cursor-pointer min-h-[160px]
                     ${isDragActive ? 'border-unergy-green bg-green-50' : 'border-gray-300 hover:border-gray-400 bg-gray-50'}`}
@@ -406,7 +406,7 @@ function App() {
             </div>
 
             {/* Right Column - Results */}
-            <div className="w-full lg:w-[450px] xl:w-[500px] flex flex-col gap-4">
+            <div className="w-full lg:w-[580px] xl:w-[640px] flex flex-col gap-4">
               <div className="bg-white/90 rounded-lg px-4 py-2 shadow-sm inline-block border border-unergy-green">
                 <h2 className="text-lg font-medium text-gray-700">2. Resultados de la Identificación</h2>
               </div>
@@ -445,7 +445,7 @@ function App() {
                               : r.verification === 'rejected' ? 'border-red-300 bg-red-50/50'
                               : 'border-gray-200'}`}
                         >
-                          <div className="flex-none w-28 h-28 rounded-md overflow-hidden border border-gray-200 bg-gray-100">
+                          <div className="flex-none w-36 h-36 rounded-md overflow-hidden border border-gray-200 bg-gray-100">
                             {r.thumbnail
                               ? <img src={r.thumbnail} alt={`Árbol ${r.tree_id}`} className="w-full h-full object-cover" />
                               : <div className="w-full h-full flex items-center justify-center text-gray-300 text-xs">Sin foto</div>
