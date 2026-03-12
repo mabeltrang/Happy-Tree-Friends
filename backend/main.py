@@ -27,7 +27,8 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=Path(__file__).parent / ".env")
-# ── Descargar modelo si MODEL_URL está configurado ─────────────────────────────
+
+# ── Rutas ──────────────────────────────────────────────────────────────────────
 MODEL_DIR    = Path(__file__).parent / "model"
 MODEL_PATH   = MODEL_DIR / "resnet50_plantas.pt"
 CLASSES_PATH = MODEL_DIR / "class_names.json"
@@ -35,39 +36,53 @@ CACHE_PATH   = MODEL_DIR / "embeddings_cache.pt"
 FEEDBACK_DIR = Path(__file__).parent / "feedback"
 TRAINING_DIR = Path(__file__).parent.parent / "data" / "3 - copia"
 DB_PATH      = Path(os.getenv("DATA_DIR", Path(__file__).parent)) / "records.db"
-DATABASE_URL = os.getenv("DATABASE_URL")  # PostgreSQL en Railway; si no, usa SQLite
-
-MODEL_URL         = os.getenv("MODEL_URL")
+DATABASE_URL = os.getenv("DATABASE_URL")
+MODEL_URL    = os.getenv("MODEL_URL")
 SPECIES_INFO_PATH = MODEL_DIR / "species_info.json"
 MADS_PATH         = MODEL_DIR / "mads_especies.json"
 
+# ── Descargar modelo ───────────────────────────────────────────────────────────
 def download_model_if_needed():
     import urllib.request
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    print("[INFO] Descargando modelo y clases desde HuggingFace...")
-    urllib.request.urlretrieve(
-        "https://huggingface.co/mabeltrang/happy-tree-friends-model/resolve/main/modelo.pt",
-        MODEL_PATH
-    )
+
+    # Verificar si el modelo existente tiene el número correcto de clases
+    if MODEL_PATH.exists() and CLASSES_PATH.exists():
+        try:
+            with open(CLASSES_PATH) as f:
+                existing_classes = json.load(f)
+            sd = torch.load(MODEL_PATH, map_location="cpu", weights_only=False)
+            model_classes = sd["fc.1.weight"].shape[0]
+            if model_classes == len(existing_classes):
+                print(f"[OK] Modelo ya existe con {model_classes} clases, no se descarga.")
+                return
+            else:
+                print(f"[WARN] Modelo tiene {model_classes} clases pero class_names.json tiene {len(existing_classes)}. Descargando nuevo...")
+                MODEL_PATH.unlink()
+                CLASSES_PATH.unlink()
+        except Exception as e:
+            print(f"[WARN] Error verificando modelo: {e}. Descargando de nuevo...")
+            MODEL_PATH.unlink(missing_ok=True)
+            CLASSES_PATH.unlink(missing_ok=True)
+
+    if not MODEL_URL:
+        print("[WARN] MODEL_URL no configurado y modelo no encontrado.")
+        return
+
+    print("[INFO] Descargando modelo desde HuggingFace...")
+    urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+    print("[OK] Modelo descargado.")
+
+    print("[INFO] Descargando class_names.json ...")
     urllib.request.urlretrieve(
         "https://huggingface.co/mabeltrang/happy-tree-friends-model/resolve/main/class_names.json",
         CLASSES_PATH
     )
-    print("[OK] Modelo y clases descargados.")
-
-    # Descargar class_names.json si no existe
-    if not CLASSES_PATH.exists():
-        print("[INFO] Descargando class_names.json ...")
-        import urllib.request
-        classes_url = "https://huggingface.co/mabeltrang/happy-tree-friends-model/resolve/main/class_names.json"
-        urllib.request.urlretrieve(classes_url, CLASSES_PATH)
-        print("[OK] class_names.json descargado.")
-    else:
-        print("[OK] class_names.json ya existe.")
+    print("[OK] class_names.json descargado.")
 
 download_model_if_needed()
 
-# ── Base de datos (PostgreSQL en Railway, SQLite en local) ─────────────────────
+# ── Base de datos ──────────────────────────────────────────────────────────────
 USE_PG = bool(DATABASE_URL)
 
 @contextmanager
