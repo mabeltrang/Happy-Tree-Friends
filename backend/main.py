@@ -17,10 +17,13 @@ import torchvision.transforms as transforms
 from torchvision import models
 from torch import nn
 from PIL import Image
+import urllib.request as _ur
+import urllib.parse as _up
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=Path(__file__).parent / ".env")
@@ -34,8 +37,9 @@ TRAINING_DIR = Path(__file__).parent.parent / "data" / "3 - copia"
 DB_PATH      = Path(os.getenv("DATA_DIR", Path(__file__).parent)) / "records.db"
 DATABASE_URL = os.getenv("DATABASE_URL")  # PostgreSQL en Railway; si no, usa SQLite
 
-MODEL_URL        = os.getenv("MODEL_URL")
+MODEL_URL         = os.getenv("MODEL_URL")
 SPECIES_INFO_PATH = MODEL_DIR / "species_info.json"
+MADS_PATH         = MODEL_DIR / "mads_especies.json"
 
 def download_model_if_needed():
     import urllib.request
@@ -475,6 +479,76 @@ async def start_retrain():
 @app.get("/api/retrain/status")
 async def get_retrain_status():
     return retrain_state
+
+
+# ── Estado de Amenaza (CITES, IUCN, MADS) ─────────────────────────────────────
+def _load_mads_data() -> dict:
+    if MADS_PATH.exists():
+        with open(MADS_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+def _query_iucn(species_name: str) -> str:
+    token = os.getenv("IUCN_API_TOKEN", "")
+    if not token:
+        return "Sin configurar"
+    try:
+        encoded = _up.quote(species_name)
+        url = f"https://apiv3.iucnredlist.org/api/v3/species/{encoded}?token={token}"
+        with _ur.urlopen(url, timeout=10) as r:
+            data = json.loads(r.read())
+        result = data.get("result", [])
+        if result:
+            return result[0].get("category", "No encontrado")
+        return "No encontrado"
+    except Exception as e:
+        print(f"[WARN] IUCN query falló para '{species_name}': {e}")
+        return "Error"
+
+def _query_cites(species_name: str) -> str:
+    token = os.getenv("CITES_API_TOKEN", "")
+    if not token:
+        return "Sin configurar"
+    try:
+        encoded = _up.quote(species_name)
+        url = f"https://api.speciesplus.net/api/v1/taxon_concepts.json?name={encoded}&with_descendants=true"
+        req = _ur.Request(url, headers={"X-Authentication-Token": token})
+        with _ur.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read())
+        for taxon in data.get("taxon_concepts", []):
+            listings = taxon.get("cites_listings", [])
+            if listings:
+                latest = sorted(listings, key=lambda x: x.get("change_date", ""), reverse=True)[0]
+                return f"Apéndice {latest.get('appendix', '?')}"
+        return "No listado"
+    except Exception as e:
+        print(f"[WARN] CITES query falló para '{species_name}': {e}")
+        return "Error"
+
+class ThreatStatusRequest(BaseModel):
+    species: List[str]
+
+@app.post("/api/threat-status")
+async def get_threat_status(req: ThreatStatusRequest):
+    mads_data = _load_mads_data()
+    results = []
+    for raw in req.species:
+        name = raw.strip()
+        if not name:
+            continue
+        # MADS lookup (case-insensitive)
+        mads_status = "No listado"
+        for key, val in mads_data.items():
+            if key.lower() == name.lower():
+                mads_status = val
+                break
+        results.append({
+            "species": name,
+            "iucn":   _query_iucn(name),
+            "cites":  _query_cites(name),
+            "mads":   mads_status,
+        })
+    return results
 
 
 # ── Servir frontend compilado ──────────────────────────────────────────────────

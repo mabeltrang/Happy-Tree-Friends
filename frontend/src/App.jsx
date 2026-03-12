@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { UploadCloud, User, X, CheckCircle, XCircle, Search, Loader2, Download, AlertCircle, BookOpen, RefreshCw, MapPin, Map } from 'lucide-react';
+import { UploadCloud, User, X, CheckCircle, XCircle, Search, Loader2, Download, AlertCircle, BookOpen, RefreshCw, MapPin, Map, Shield } from 'lucide-react';
 import JSZip from 'jszip';
 import * as XLSX from 'xlsx';
 import MapView from './MapView';
@@ -26,6 +26,12 @@ function App() {
   const [longitud, setLongitud]         = useState('');
 
   const [activeTab, setActiveTab] = useState('clasificar');
+
+  // ── Estado de Amenaza ──
+  const [speciesInput, setSpeciesInput]     = useState('');
+  const [threatResults, setThreatResults]   = useState([]);
+  const [isQueryingThreat, setIsQueryingThreat] = useState(false);
+  const [threatError, setThreatError]       = useState(null);
 
   const fileInputRef = useRef(null);
   const nextId       = useRef(1);
@@ -206,6 +212,64 @@ function App() {
     }, 1500);
   };
 
+  // --- Consulta Estado de Amenaza ---
+  const handleQueryThreat = async () => {
+    const lines = speciesInput.split('\n').map(l => l.trim()).filter(Boolean);
+    if (lines.length === 0) return;
+    setIsQueryingThreat(true);
+    setThreatError(null);
+    setThreatResults([]);
+    try {
+      const res = await fetch('/api/threat-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ species: lines }),
+      });
+      if (!res.ok) throw new Error(`Error ${res.status}`);
+      setThreatResults(await res.json());
+    } catch (e) {
+      setThreatError(e.message);
+    } finally {
+      setIsQueryingThreat(false);
+    }
+  };
+
+  const handleDownloadThreatExcel = () => {
+    const rows = threatResults.map(r => ({
+      'Especie':  r.species,
+      'CITES':    r.cites,
+      'IUCN':     r.iucn,
+      'MADS (Res. 1912/2017)': r.mads,
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Estado de Amenaza');
+    XLSX.writeFile(wb, 'estado_amenaza_especies.xlsx');
+  };
+
+  const threatBadge = (status) => {
+    const s = (status || '').toUpperCase();
+    const map = {
+      'CR':             'bg-red-700 text-white',
+      'EN':             'bg-orange-500 text-white',
+      'VU':             'bg-yellow-500 text-white',
+      'NT':             'bg-amber-300 text-gray-800',
+      'LC':             'bg-green-500 text-white',
+      'DD':             'bg-gray-400 text-white',
+      'NE':             'bg-gray-300 text-gray-700',
+      'NO LISTADO':     'bg-gray-200 text-gray-500',
+      'NO ENCONTRADO':  'bg-gray-200 text-gray-500',
+      'SIN CONFIGURAR': 'bg-slate-200 text-slate-500',
+      'ERROR':          'bg-red-100 text-red-600',
+    };
+    const cls = map[s] || 'bg-gray-200 text-gray-600';
+    return (
+      <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold ${cls}`}>
+        {status || '—'}
+      </span>
+    );
+  };
+
   // --- Excel export (incluye ubicación, nombre común y familia) ---
   const handleDownloadExcel = () => {
     const rows = results.map((r) => {
@@ -284,9 +348,95 @@ function App() {
               <Map className="h-4 w-4" />
               Mapa de Distribución
             </button>
+            <button
+              onClick={() => setActiveTab('amenaza')}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition-all shadow-sm
+                ${activeTab === 'amenaza' ? 'bg-unergy-green text-white' : 'bg-white/90 text-gray-600 hover:bg-white border border-gray-200'}`}
+            >
+              <Shield className="h-4 w-4" />
+              Estado de Amenaza
+            </button>
           </div>
 
-          {activeTab === 'mapa' ? <MapView /> : (
+          {activeTab === 'mapa' ? <MapView /> : activeTab === 'amenaza' ? (
+            /* ── Pestaña Estado de Amenaza ── */
+            <div className="flex flex-col gap-4">
+              <div className="bg-white rounded-lg p-4 shadow-sm border border-unergy-green flex flex-col gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Lista de especies <span className="text-gray-400 font-normal">(una por línea, nombre científico)</span>
+                  </label>
+                  <textarea
+                    value={speciesInput}
+                    onChange={(e) => setSpeciesInput(e.target.value)}
+                    rows={8}
+                    placeholder={"Cedrela odorata\nSwietenia macrophylla\nQuercus humboldtii\nHandroanthus chrysanthus\n..."}
+                    className="w-full text-sm rounded-md border border-gray-300 px-3 py-2 focus:outline-none focus:border-unergy-green font-mono resize-y"
+                  />
+                </div>
+                {threatError && (
+                  <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+                    <AlertCircle className="h-4 w-4 flex-none" /><span>{threatError}</span>
+                  </div>
+                )}
+                <button
+                  onClick={handleQueryThreat}
+                  disabled={isQueryingThreat || !speciesInput.trim()}
+                  className={`py-2.5 rounded-lg flex items-center justify-center gap-2 font-medium text-white shadow-sm transition-all
+                    ${isQueryingThreat || !speciesInput.trim() ? 'bg-gray-400 cursor-not-allowed' : 'bg-unergy-green hover:bg-unergy-dark'}`}
+                >
+                  {isQueryingThreat
+                    ? <><Loader2 className="h-4 w-4 animate-spin" /><span>Consultando...</span></>
+                    : <><Shield className="h-4 w-4" /><span>Consultar Estado de Amenaza</span></>
+                  }
+                </button>
+              </div>
+
+              {threatResults.length > 0 && (
+                <div className="bg-white rounded-lg shadow-sm border border-unergy-green overflow-hidden">
+                  <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+                    <span className="text-sm font-medium text-gray-700">
+                      {threatResults.length} especie{threatResults.length !== 1 ? 's' : ''} consultada{threatResults.length !== 1 ? 's' : ''}
+                    </span>
+                    <button
+                      onClick={handleDownloadThreatExcel}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium text-white bg-unergy-green hover:bg-unergy-dark transition-all shadow-sm"
+                    >
+                      <Download className="h-4 w-4" />Descargar Excel
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50 text-gray-600 text-xs uppercase tracking-wide">
+                        <tr>
+                          <th className="text-left px-4 py-3 font-semibold">Especie</th>
+                          <th className="text-center px-4 py-3 font-semibold">CITES</th>
+                          <th className="text-center px-4 py-3 font-semibold">IUCN</th>
+                          <th className="text-center px-4 py-3 font-semibold">MADS <span className="normal-case font-normal text-gray-400">(Res. 1912/2017)</span></th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {threatResults.map((r, i) => (
+                          <tr key={i} className="hover:bg-gray-50 transition-colors">
+                            <td className="px-4 py-3 italic text-gray-800 font-medium">{r.species}</td>
+                            <td className="px-4 py-3 text-center">{threatBadge(r.cites)}</td>
+                            <td className="px-4 py-3 text-center">{threatBadge(r.iucn)}</td>
+                            <td className="px-4 py-3 text-center">{threatBadge(r.mads)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="px-4 py-2 bg-gray-50 border-t border-gray-200">
+                    <p className="text-xs text-gray-400">
+                      CR = En Peligro Crítico · EN = En Peligro · VU = Vulnerable · NT = Casi Amenazado · LC = Preocupación Menor · DD = Datos Insuficientes.
+                      Para CITES e IUCN configure las variables de entorno CITES_API_TOKEN e IUCN_API_TOKEN.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
           <div className="flex flex-col lg:flex-row gap-6 flex-1 lg:items-start">
             {/* Left Column */}
             <div className="flex-1 min-w-0 flex flex-col gap-4">
