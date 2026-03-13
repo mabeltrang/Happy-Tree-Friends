@@ -70,6 +70,28 @@ function App() {
 
   const BATCH_SIZE = 30;
 
+  // Comprime imagen a max 800px antes de subir (reduce de ~5MB a ~100KB)
+  const compressImage = (file) => new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const MAX = 800;
+      const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      canvas.toBlob(
+        (blob) => resolve(new File([blob], file.name, { type: 'image/jpeg' })),
+        'image/jpeg', 0.82
+      );
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
+
   const handleStartClassification = async () => {
     if (files.length === 0 || !locationReady) return;
     setIsClassifying(true);
@@ -97,9 +119,12 @@ function App() {
       for (let i = 0; i < treeIds.length; i += BATCH_SIZE) {
         const batchIds = treeIds.slice(i, i + BATCH_SIZE);
         const formData = new FormData();
-        batchIds.forEach((id) => {
-          treeMap[id].forEach((entry) => formData.append('files', entry.file, entry.file.name));
-        });
+        await Promise.all(batchIds.map(async (id) => {
+          await Promise.all(treeMap[id].map(async (entry) => {
+            const compressed = await compressImage(entry.file);
+            formData.append('files', compressed, entry.file.name);
+          }));
+        }));
         formData.append('departamento', departamento.trim());
         formData.append('municipio',    municipio.trim());
         formData.append('vereda',       vereda.trim());

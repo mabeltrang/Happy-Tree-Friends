@@ -203,23 +203,16 @@ def parse_tree_id(filename: str) -> str | None:
     match = re.match(r"^(\w+)-\d+$", name)
     return match.group(1) if match else None
 
-def classify_image(image_bytes: bytes) -> dict | None:
-    if model is None:
-        raise HTTPException(status_code=503, detail="Modelo no cargado.")
-    img = Image.open(BytesIO(image_bytes)).convert("RGB")
-    tensor = INFER_TRANSFORM(img).unsqueeze(0)
-    with torch.no_grad():
-        output = model(tensor)
-        probs  = torch.softmax(output, dim=1)[0]
-        pred_idx = probs.argmax().item()
-    return {"species": class_names[pred_idx], "confidence": probs[pred_idx].item()}
-
 def make_thumbnail(image_bytes: bytes, size: int = 200) -> str:
     img = Image.open(BytesIO(image_bytes)).convert("RGB")
     img.thumbnail((size, size))
     buf = BytesIO()
     img.save(buf, format="JPEG", quality=85)
     return f"data:image/jpeg;base64,{base64.b64encode(buf.getvalue()).decode()}"
+
+def _open_tensor(image_bytes: bytes):
+    img = Image.open(BytesIO(image_bytes)).convert("RGB")
+    return INFER_TRANSFORM(img)
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 @app.post("/api/classify")
@@ -231,6 +224,9 @@ async def classify(
     latitud:      Optional[float] = Form(None),
     longitud:     Optional[float] = Form(None),
 ):
+    if model is None:
+        raise HTTPException(status_code=503, detail="Modelo no cargado.")
+
     tree_files: dict[str, list] = defaultdict(list)
     for upload in files:
         filename = upload.filename or ""
@@ -247,21 +243,43 @@ async def classify(
         try:    return (0, int(k))
         except: return (1, k)
 
-    results = []
+    # Construir lista plana: (tree_id, foto_idx, tensor, content)
+    flat: list[tuple] = []
     for tree_id, photos in sorted(tree_files.items(), key=lambda x: sort_key(x[0])):
-        best_prediction, best_confidence, thumbnail = None, -1.0, None
-        for photo in photos:
-            prediction = classify_image(photo["content"])
-            if prediction and prediction["confidence"] > best_confidence:
-                best_confidence = prediction["confidence"]
-                best_prediction = prediction
-                thumbnail = make_thumbnail(photo["content"])
-        below_threshold = best_prediction is None or best_confidence < CONFIDENCE_THRESHOLD
+        for i, photo in enumerate(photos):
+            try:
+                tensor = _open_tensor(photo["content"])
+                flat.append((tree_id, i, tensor, photo["content"]))
+            except Exception:
+                pass
+
+    # Un solo forward pass para todas las imágenes
+    batch = torch.stack([item[2] for item in flat])
+    with torch.no_grad():
+        probs_all = torch.softmax(model(batch), dim=1)
+
+    # Seleccionar mejor predicción por árbol
+    best: dict[str, dict] = {}
+    for idx, (tree_id, _, _, content) in enumerate(flat):
+        probs    = probs_all[idx]
+        pred_idx = probs.argmax().item()
+        conf     = probs[pred_idx].item()
+        if tree_id not in best or conf > best[tree_id]["confidence"]:
+            best[tree_id] = {
+                "species":    class_names[pred_idx],
+                "confidence": conf,
+                "content":    content,
+            }
+
+    results = []
+    for tree_id, _ in sorted(tree_files.items(), key=lambda x: sort_key(x[0])):
+        b = best.get(tree_id)
+        below_threshold = b is None or b["confidence"] < CONFIDENCE_THRESHOLD
         results.append({
             "tree_id":           tree_id,
-            "predicted_species": "No determinado" if below_threshold else best_prediction["species"],
-            "confidence":        round(best_confidence * 100, 1) if best_confidence >= 0 else 0,
-            "thumbnail":         thumbnail,
+            "predicted_species": "No determinado" if below_threshold else b["species"],
+            "confidence":        round(b["confidence"] * 100, 1) if b else 0,
+            "thumbnail":         make_thumbnail(b["content"]) if b else None,
             "departamento":      departamento,
             "municipio":         municipio,
             "vereda":            vereda,
