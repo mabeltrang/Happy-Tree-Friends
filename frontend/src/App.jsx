@@ -68,7 +68,7 @@ function App() {
   // --- Classification ---
   const locationReady = departamento.trim() && municipio.trim();
 
-  const BATCH_SIZE = 30;
+  const BATCH_SIZE = 10;
 
   // Comprime imagen a max 800px antes de subir (reduce de ~5MB a ~100KB)
   const compressImage = (file) => new Promise((resolve) => {

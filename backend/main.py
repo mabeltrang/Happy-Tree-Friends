@@ -243,24 +243,30 @@ async def classify(
         try:    return (0, int(k))
         except: return (1, k)
 
-    # Construir lista plana: (tree_id, foto_idx, tensor, content)
+    # Construir lista plana: (tree_id, tensor, content)
     flat: list[tuple] = []
     for tree_id, photos in sorted(tree_files.items(), key=lambda x: sort_key(x[0])):
-        for i, photo in enumerate(photos):
+        for photo in photos:
             try:
                 tensor = _open_tensor(photo["content"])
-                flat.append((tree_id, i, tensor, photo["content"]))
+                flat.append((tree_id, tensor, photo["content"]))
             except Exception:
                 pass
 
-    # Un solo forward pass para todas las imágenes
-    batch = torch.stack([item[2] for item in flat])
+    # Forward pass en sub-lotes de 16 para no saturar RAM ni superar timeout
+    SUB_BATCH = 16
+    all_probs: list[torch.Tensor] = []
     with torch.no_grad():
-        probs_all = torch.softmax(model(batch), dim=1)
+        for start in range(0, len(flat), SUB_BATCH):
+            chunk = flat[start:start + SUB_BATCH]
+            batch = torch.stack([item[1] for item in chunk])
+            probs = torch.softmax(model(batch), dim=1)
+            all_probs.append(probs)
+    probs_all = torch.cat(all_probs, dim=0)
 
     # Seleccionar mejor predicción por árbol
     best: dict[str, dict] = {}
-    for idx, (tree_id, _, _, content) in enumerate(flat):
+    for idx, (tree_id, _, content) in enumerate(flat):
         probs    = probs_all[idx]
         pred_idx = probs.argmax().item()
         conf     = probs[pred_idx].item()
