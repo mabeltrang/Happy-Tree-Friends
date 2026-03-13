@@ -26,7 +26,15 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
+print("[DEBUG ENV] ANTES de load_dotenv:")
+print(f"  IUCN={os.getenv('IUCN_API_TOKEN', 'VACIO')}")
+print(f"  CITES={os.getenv('CITES_API_TOKEN', 'VACIO')}")
+
 load_dotenv(dotenv_path=Path(__file__).parent / ".env", override=False)
+
+print("[DEBUG ENV] DESPUÉS de load_dotenv:")
+print(f"  IUCN={os.getenv('IUCN_API_TOKEN', 'VACIO')}")
+print(f"  CITES={os.getenv('CITES_API_TOKEN', 'VACIO')}")
 
 
 # ── Rutas ──────────────────────────────────────────────────────────────────────
