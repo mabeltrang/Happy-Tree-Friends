@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { MapContainer, TileLayer, CircleMarker, Popup } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
-import { MapPin, Filter, List, BarChart2, Globe, Shield, Loader2, AlertCircle } from 'lucide-react';
+import { MapPin, Filter, List, BarChart2, Globe, Shield, Loader2 } from 'lucide-react';
 
 const SPECIES_COLORS = [
   '#006B33', '#e67e22', '#2980b9', '#8e44ad', '#c0392b',
@@ -32,40 +32,46 @@ function ThreatBadge({ status }) {
 }
 
 function MapView() {
+  // Registros propios (clasificaciones guardadas)
   const [records, setRecords] = useState([]);
-  const [selectedSpecies, setSelectedSpecies] = useState('all');
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingRecords, setIsLoadingRecords] = useState(true);
 
-  // GBIF
-  const [gbifOccurrences, setGbifOccurrences] = useState([]);
-  const [isLoadingGbif, setIsLoadingGbif] = useState(false);
-  const [showGbif, setShowGbif] = useState(false);
+  // GBIF — cargado automáticamente para todas las especies del modelo
+  const [gbifBySpecies, setGbifBySpecies] = useState({}); // { species: [{lat,lng,...}] }
+  const [isLoadingGbif, setIsLoadingGbif] = useState(true);
   const [gbifError, setGbifError] = useState(null);
 
-  // Threat status
+  // Filtro
+  const [selectedSpecies, setSelectedSpecies] = useState('all');
+
+  // Estado de amenaza (carga al seleccionar especie)
   const [threatInfo, setThreatInfo] = useState(null);
   const [isLoadingThreat, setIsLoadingThreat] = useState(false);
 
+  // Carga inicial: registros propios + GBIF de todas las especies del modelo
   useEffect(() => {
-    Promise.all([
-      fetch('/api/records').then(r => r.ok ? r.json() : []),
-      fetch('/api/classes').then(r => r.ok ? r.json() : []),
-    ]).then(([recs]) => {
-      setRecords(Array.isArray(recs) ? recs : []);
-    }).catch(() => {}).finally(() => setIsLoading(false));
+    fetch('/api/records')
+      .then(r => r.ok ? r.json() : [])
+      .then(data => setRecords(Array.isArray(data) ? data : []))
+      .catch(() => {})
+      .finally(() => setIsLoadingRecords(false));
+
+    fetch('/api/gbif-occurrences/all')
+      .then(r => r.ok ? r.json() : [])
+      .then(data => {
+        const bySpecies = {};
+        (Array.isArray(data) ? data : []).forEach(({ species, occurrences }) => {
+          bySpecies[species] = occurrences || [];
+        });
+        setGbifBySpecies(bySpecies);
+      })
+      .catch(() => setGbifError('No se pudo cargar GBIF'))
+      .finally(() => setIsLoadingGbif(false));
   }, []);
 
-  // Al cambiar especie: cargar amenaza automáticamente, limpiar GBIF
+  // Carga estado de amenaza al seleccionar especie
   useEffect(() => {
-    setGbifOccurrences([]);
-    setShowGbif(false);
-    setGbifError(null);
-
-    if (selectedSpecies === 'all') {
-      setThreatInfo(null);
-      return;
-    }
-
+    if (selectedSpecies === 'all') { setThreatInfo(null); return; }
     setIsLoadingThreat(true);
     setThreatInfo(null);
     fetch('/api/threat-status', {
@@ -79,64 +85,70 @@ function MapView() {
       .finally(() => setIsLoadingThreat(false));
   }, [selectedSpecies]);
 
-  const loadGbifOccurrences = async () => {
-    if (selectedSpecies === 'all') return;
-    setIsLoadingGbif(true);
-    setGbifError(null);
-    try {
-      const res = await fetch(`/api/gbif-occurrences?species=${encodeURIComponent(selectedSpecies)}&limit=300`);
-      if (!res.ok) throw new Error(`Error ${res.status}`);
-      const data = await res.json();
-      setGbifOccurrences(data.occurrences || []);
-      setShowGbif(true);
-    } catch {
-      setGbifError('No se pudo cargar ocurrencias de GBIF');
-    } finally {
-      setIsLoadingGbif(false);
-    }
-  };
+  // Lista de todas las especies (modelo + registros propios)
+  const allSpecies = useMemo(() => {
+    const fromGbif    = Object.keys(gbifBySpecies);
+    const fromRecords = [...new Set(records.map(r => r.species).filter(Boolean))];
+    return [...new Set([...fromGbif, ...fromRecords])].sort();
+  }, [gbifBySpecies, records]);
 
   const speciesColorMap = useMemo(() => {
-    const allSpecies = [...new Set(records.map(r => r.species).filter(Boolean))];
     const map = {};
     allSpecies.forEach((s, i) => { map[s] = SPECIES_COLORS[i % SPECIES_COLORS.length]; });
     return map;
-  }, [records]);
+  }, [allSpecies]);
 
-  const filtered = useMemo(() => (
-    selectedSpecies === 'all' ? records : records.filter(r => r.species === selectedSpecies)
-  ), [records, selectedSpecies]);
+  // Puntos GBIF a mostrar según filtro
+  const gbifPoints = useMemo(() => {
+    if (selectedSpecies === 'all') {
+      return Object.entries(gbifBySpecies).flatMap(([species, occs]) =>
+        occs.map(o => ({ ...o, species }))
+      );
+    }
+    return (gbifBySpecies[selectedSpecies] || []).map(o => ({ ...o, species: selectedSpecies }));
+  }, [gbifBySpecies, selectedSpecies]);
 
-  const allWithCoords = useMemo(() => records.filter(r => r.latitud != null && r.longitud != null), [records]);
-  const withoutCoords = useMemo(() => records.filter(r => r.latitud == null || r.longitud == null), [records]);
+  // Registros propios a mostrar
+  const ownWithCoords = useMemo(() => {
+    const base = records.filter(r => r.latitud != null && r.longitud != null);
+    return selectedSpecies === 'all' ? base : base.filter(r => r.species === selectedSpecies);
+  }, [records, selectedSpecies]);
 
-  const filteredWithCoords = useMemo(() => (
-    selectedSpecies === 'all' ? allWithCoords : allWithCoords.filter(r => r.species === selectedSpecies)
-  ), [allWithCoords, selectedSpecies]);
+  const ownWithout = useMemo(() =>
+    records.filter(r => r.latitud == null || r.longitud == null),
+    [records]
+  );
 
-  const uniqueSpecies = [...new Set(records.map(r => r.species).filter(Boolean))];
-  const uniqueDepts   = [...new Set(filtered.map(r => r.departamento).filter(Boolean))];
-  const uniqueMunis   = [...new Set(filtered.map(r => r.municipio).filter(Boolean))];
+  // Estadísticas sidebar
+  const filtered = selectedSpecies === 'all'
+    ? records
+    : records.filter(r => r.species === selectedSpecies);
+  const uniqueDepts = [...new Set(filtered.map(r => r.departamento).filter(Boolean))];
+  const uniqueMunis = [...new Set(filtered.map(r => r.municipio).filter(Boolean))];
 
   const speciesCounts = useMemo(() => {
     const counts = {};
-    filtered.forEach(r => { if (r.species) counts[r.species] = (counts[r.species] || 0) + 1; });
-    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
-  }, [filtered]);
+    allSpecies.forEach(s => {
+      const gbif = (gbifBySpecies[s] || []).length;
+      const own  = records.filter(r => r.species === s).length;
+      counts[s]  = { gbif, own };
+    });
+    return counts;
+  }, [allSpecies, gbifBySpecies, records]);
 
   const groupedWithout = useMemo(() => {
     const groups = {};
-    withoutCoords.forEach(r => {
+    ownWithout.forEach(r => {
       const key = `${r.departamento || ''}|${r.municipio || ''}`;
       if (!groups[key]) groups[key] = { dept: r.departamento, muni: r.municipio, count: 0 };
       groups[key].count++;
     });
     return Object.values(groups).sort((a, b) => b.count - a.count);
-  }, [withoutCoords]);
+  }, [ownWithout]);
 
-  const hasLocalPoints = filteredWithCoords.length > 0;
-  const hasGbifPoints  = showGbif && gbifOccurrences.length > 0;
-  const shouldShowMap  = hasLocalPoints || hasGbifPoints;
+  const isLoading = isLoadingRecords || isLoadingGbif;
+  const totalGbif = gbifPoints.length;
+  const totalOwn  = ownWithCoords.length;
 
   return (
     <div className="flex flex-col lg:flex-row gap-6 flex-1 min-h-0">
@@ -144,7 +156,7 @@ function MapView() {
       {/* Panel izquierdo */}
       <div className="w-full lg:w-72 flex flex-col gap-4 overflow-y-auto">
 
-        {/* Filtro por especie */}
+        {/* Filtro */}
         <div className="bg-white rounded-lg p-4 shadow-sm border border-unergy-green">
           <div className="flex items-center gap-2 mb-3">
             <Filter className="h-4 w-4 text-unergy-green" />
@@ -155,28 +167,26 @@ function MapView() {
             onChange={e => setSelectedSpecies(e.target.value)}
             className="w-full text-sm rounded-md px-3 py-2 border border-gray-300 focus:outline-none focus:border-unergy-green text-gray-700 bg-white"
           >
-            <option value="all">Todas las especies ({uniqueSpecies.length})</option>
-            {uniqueSpecies.map(s => (
+            <option value="all">Todas las especies ({allSpecies.length})</option>
+            {allSpecies.map(s => (
               <option key={s} value={s}>{s}</option>
             ))}
           </select>
         </div>
 
-        {/* Panel amenaza + GBIF — solo cuando hay especie seleccionada */}
+        {/* Estado de amenaza — solo cuando hay especie seleccionada */}
         {selectedSpecies !== 'all' && (
           <div className="bg-white rounded-lg p-4 shadow-sm border border-unergy-green">
-
-            {/* Estado de amenaza */}
             <div className="flex items-center gap-2 mb-3">
               <Shield className="h-4 w-4 text-unergy-green" />
               <span className="text-sm font-semibold text-gray-700">Estado de Amenaza</span>
             </div>
             {isLoadingThreat ? (
-              <div className="flex items-center gap-2 text-gray-400 text-xs mb-3">
+              <div className="flex items-center gap-2 text-gray-400 text-xs">
                 <Loader2 className="h-3 w-3 animate-spin" /><span>Consultando APIs...</span>
               </div>
             ) : threatInfo ? (
-              <div className="space-y-2 mb-3">
+              <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-gray-500">IUCN Red List</span>
                   <ThreatBadge status={threatInfo.iucn} />
@@ -191,125 +201,77 @@ function MapView() {
                 </div>
               </div>
             ) : null}
-
-            {/* Distribución GBIF */}
-            <div className="pt-3 border-t border-gray-100">
-              <div className="flex items-center gap-2 mb-2">
-                <Globe className="h-4 w-4 text-blue-500" />
-                <span className="text-xs font-semibold text-gray-700">Distribución Global (GBIF)</span>
-              </div>
-              {gbifError && (
-                <div className="flex items-center gap-1 text-xs text-red-500 mb-2">
-                  <AlertCircle className="h-3 w-3 flex-none" />{gbifError}
-                </div>
-              )}
-              {showGbif && gbifOccurrences.length > 0 ? (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-blue-600 font-medium">{gbifOccurrences.length} registros globales</span>
-                    <button
-                      onClick={() => { setShowGbif(false); setGbifOccurrences([]); }}
-                      className="text-red-400 hover:text-red-600"
-                    >
-                      Ocultar
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-xs text-gray-400">
-                    <span className="w-3 h-3 rounded-full border-2 border-blue-600 bg-blue-300 flex-none" />
-                    Ocurrencias GBIF (azul)
-                  </div>
-                  <div className="flex items-center gap-1.5 text-xs text-gray-400">
-                    <span className="w-3 h-3 rounded-full flex-none" style={{ backgroundColor: speciesColorMap[selectedSpecies] || '#006B33' }} />
-                    Registros propios
-                  </div>
-                </div>
-              ) : (
-                <button
-                  onClick={loadGbifOccurrences}
-                  disabled={isLoadingGbif}
-                  className="w-full py-2 rounded-md text-xs font-medium text-white bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-1.5 transition-colors"
-                >
-                  {isLoadingGbif
-                    ? <><Loader2 className="h-3 w-3 animate-spin" />Cargando GBIF...</>
-                    : <><Globe className="h-3 w-3" />Ver distribución en GBIF</>
-                  }
-                </button>
-              )}
-            </div>
           </div>
         )}
 
-        {/* Estadísticas */}
+        {/* Resumen */}
         <div className="bg-white rounded-lg p-4 shadow-sm border border-unergy-green">
           <div className="flex items-center gap-2 mb-3">
             <BarChart2 className="h-4 w-4 text-unergy-green" />
             <span className="text-sm font-semibold text-gray-700">Resumen</span>
           </div>
           <div className="space-y-2">
-            {[
-              ['Árboles registrados', filtered.length],
-              ['Departamentos', uniqueDepts.length],
-              ['Municipios', uniqueMunis.length],
-              ['Con coordenadas GPS', filteredWithCoords.length],
-            ].map(([label, val]) => (
-              <div key={label} className="flex justify-between text-sm">
-                <span className="text-gray-500">{label}</span>
-                <span className="font-semibold text-gray-800">{val}</span>
+            {isLoadingGbif ? (
+              <div className="flex items-center gap-2 text-gray-400 text-xs">
+                <Loader2 className="h-3 w-3 animate-spin" /><span>Cargando GBIF...</span>
               </div>
-            ))}
-            {hasGbifPoints && (
-              <div className="flex justify-between text-sm">
-                <span className="text-blue-500">Ocurrencias GBIF</span>
-                <span className="font-semibold text-blue-600">{gbifOccurrences.length}</span>
-              </div>
+            ) : (
+              <>
+                <div className="flex justify-between text-sm">
+                  <span className="text-blue-500 flex items-center gap-1"><Globe className="h-3 w-3" /> Ocurrencias GBIF</span>
+                  <span className="font-semibold text-blue-600">{totalGbif}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-unergy-green flex items-center gap-1"><MapPin className="h-3 w-3" /> Registros propios</span>
+                  <span className="font-semibold text-gray-800">{totalOwn}</span>
+                </div>
+                {selectedSpecies === 'all' && (
+                  <>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-500">Departamentos</span>
+                      <span className="font-semibold text-gray-800">{uniqueDepts.length}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-500">Municipios</span>
+                      <span className="font-semibold text-gray-800">{uniqueMunis.length}</span>
+                    </div>
+                  </>
+                )}
+              </>
             )}
           </div>
         </div>
 
-        {/* Conteo por especie */}
-        {speciesCounts.length > 0 && (
+        {/* Leyenda de especies */}
+        {!isLoadingGbif && allSpecies.length > 0 && (
           <div className="bg-white rounded-lg p-4 shadow-sm border border-unergy-green">
-            <p className="text-sm font-semibold text-gray-700 mb-3">
-              {selectedSpecies === 'all' ? 'Por especie' : 'Distribución geográfica'}
-            </p>
-            {selectedSpecies === 'all' ? (
-              <div className="space-y-2">
-                {speciesCounts.map(([sp, cnt]) => (
-                  <div key={sp}>
-                    <div className="flex justify-between text-xs text-gray-600 mb-0.5">
-                      <span className="truncate flex items-center gap-1.5">
-                        <span className="w-2.5 h-2.5 rounded-full flex-none" style={{ backgroundColor: speciesColorMap[sp] || '#999' }} />
-                        {sp}
-                      </span>
-                      <span className="font-semibold ml-2 flex-none">{cnt}</span>
-                    </div>
-                    <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
-                      <div
-                        className="h-full rounded-full"
-                        style={{
-                          width: `${(cnt / filtered.length) * 100}%`,
-                          backgroundColor: speciesColorMap[sp] || '#006B33',
-                        }}
-                      />
+            <p className="text-sm font-semibold text-gray-700 mb-3">Especies del modelo</p>
+            <div className="space-y-2">
+              {allSpecies.map(sp => {
+                const counts = speciesCounts[sp] || { gbif: 0, own: 0 };
+                const isActive = selectedSpecies === 'all' || selectedSpecies === sp;
+                return (
+                  <div
+                    key={sp}
+                    onClick={() => setSelectedSpecies(selectedSpecies === sp ? 'all' : sp)}
+                    className={`flex items-center gap-2 cursor-pointer rounded-md px-2 py-1.5 transition-colors
+                      ${selectedSpecies === sp ? 'bg-green-50 border border-unergy-green' : 'hover:bg-gray-50'}`}
+                  >
+                    <span
+                      className="w-3 h-3 rounded-full flex-none"
+                      style={{ backgroundColor: speciesColorMap[sp] || '#999', opacity: isActive ? 1 : 0.4 }}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-xs truncate font-medium ${isActive ? 'text-gray-800' : 'text-gray-400'}`}>{sp}</p>
+                      <p className="text-[10px] text-gray-400">
+                        {counts.gbif} GBIF{counts.own > 0 ? ` · ${counts.own} propio${counts.own > 1 ? 's' : ''}` : ''}
+                      </p>
                     </div>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <div className="space-y-1.5">
-                {uniqueDepts.map(dept => {
-                  const depRecs = filtered.filter(r => r.departamento === dept);
-                  const munis = [...new Set(depRecs.map(r => r.municipio).filter(Boolean))];
-                  return (
-                    <div key={dept} className="bg-green-50 rounded-md px-3 py-2">
-                      <p className="text-xs font-semibold text-gray-700">{dept}</p>
-                      <p className="text-xs text-gray-500">{munis.join(', ') || '—'}</p>
-                      <p className="text-xs text-unergy-green mt-0.5">{depRecs.length} árbol{depRecs.length > 1 ? 'es' : ''}</p>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+                );
+              })}
+            </div>
+            <p className="text-[10px] text-gray-400 mt-2">Clic para filtrar por especie</p>
           </div>
         )}
 
@@ -318,7 +280,7 @@ function MapView() {
           <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
             <div className="flex items-center gap-2 mb-3">
               <List className="h-4 w-4 text-gray-400" />
-              <span className="text-sm font-semibold text-gray-700">Sin coordenadas GPS</span>
+              <span className="text-sm font-semibold text-gray-700">Registros sin GPS</span>
             </div>
             <div className="space-y-1.5">
               {groupedWithout.map((g, i) => (
@@ -336,42 +298,23 @@ function MapView() {
       {/* Mapa */}
       <div className="flex-1 rounded-lg overflow-hidden border border-unergy-green shadow-sm" style={{ minHeight: '500px' }}>
         {isLoading ? (
-          <div className="w-full h-full flex items-center justify-center bg-gray-50">
-            <p className="text-gray-400 text-sm">Cargando registros...</p>
-          </div>
-        ) : records.length === 0 ? (
-          <div className="w-full h-full flex flex-col items-center justify-center bg-gray-50 p-8 text-center">
-            <MapPin className="h-14 w-14 text-gray-200 mb-4" />
-            <p className="text-gray-500 font-medium">Aún no hay registros con ubicación</p>
-            <p className="text-gray-400 text-sm mt-1 max-w-xs">
-              Clasifica árboles en la pestaña de Clasificación para ver su distribución aquí.
-            </p>
-          </div>
-        ) : !shouldShowMap ? (
-          <div className="w-full h-full flex flex-col items-center justify-center bg-gray-50 p-8 text-center">
-            <MapPin className="h-14 w-14 text-gray-200 mb-4" />
-            <p className="text-gray-500 font-medium">No hay coordenadas GPS en los registros</p>
-            <p className="text-gray-400 text-sm mt-1 max-w-xs">
-              Hay {filtered.length} registro{filtered.length > 1 ? 's' : ''} guardado{filtered.length > 1 ? 's' : ''} por municipio/departamento pero sin latitud/longitud.
-              {selectedSpecies !== 'all' && ' Puedes cargar la distribución global con el botón de GBIF.'}
-            </p>
-            {selectedSpecies !== 'all' && (
-              <button
-                onClick={loadGbifOccurrences}
-                disabled={isLoadingGbif}
-                className="mt-4 px-4 py-2 rounded-md text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 flex items-center gap-2"
-              >
-                {isLoadingGbif
-                  ? <><Loader2 className="h-4 w-4 animate-spin" />Cargando...</>
-                  : <><Globe className="h-4 w-4" />Ver distribución en GBIF</>
-                }
-              </button>
+          <div className="w-full h-full flex flex-col items-center justify-center bg-gray-50 gap-3">
+            <Loader2 className="h-8 w-8 text-unergy-green animate-spin" />
+            <p className="text-gray-500 text-sm">Cargando distribución global de especies...</p>
+            {isLoadingGbif && (
+              <p className="text-gray-400 text-xs">Consultando GBIF para {Object.keys(gbifBySpecies).length || '...'} especies</p>
             )}
+          </div>
+        ) : gbifError && totalGbif === 0 && totalOwn === 0 ? (
+          <div className="w-full h-full flex flex-col items-center justify-center bg-gray-50 p-8 text-center">
+            <Globe className="h-14 w-14 text-gray-200 mb-4" />
+            <p className="text-gray-500 font-medium">No se pudo conectar con GBIF</p>
+            <p className="text-gray-400 text-sm mt-1">{gbifError}</p>
           </div>
         ) : (
           <MapContainer
             center={[4.5709, -74.2973]}
-            zoom={hasLocalPoints ? 5 : 3}
+            zoom={5}
             style={{ height: '100%', width: '100%' }}
           >
             <TileLayer
@@ -379,23 +322,30 @@ function MapView() {
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
 
-            {/* Ocurrencias GBIF — marcadores azules pequeños */}
-            {hasGbifPoints && gbifOccurrences.map((occ, i) => (
+            {/* Ocurrencias GBIF — marcadores pequeños semitransparentes */}
+            {gbifPoints.map((occ, i) => (
               <CircleMarker
                 key={`gbif-${i}`}
                 center={[occ.lat, occ.lng]}
-                radius={5}
+                radius={4}
                 pathOptions={{
-                  color: '#1d4ed8',
-                  weight: 1,
-                  fillColor: '#93c5fd',
-                  fillOpacity: 0.65,
+                  color: speciesColorMap[occ.species] || '#999',
+                  weight: 0.5,
+                  fillColor: speciesColorMap[occ.species] || '#999',
+                  fillOpacity: 0.55,
                 }}
               >
                 <Popup>
-                  <div style={{ minWidth: '140px' }}>
-                    <p style={{ fontWeight: 'bold', color: '#1d4ed8', marginBottom: '2px' }}>GBIF</p>
-                    <p style={{ fontSize: '12px', fontStyle: 'italic' }}>{selectedSpecies}</p>
+                  <div style={{ minWidth: '150px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                      <span style={{
+                        width: '10px', height: '10px', borderRadius: '50%',
+                        backgroundColor: speciesColorMap[occ.species] || '#999',
+                        flexShrink: 0,
+                      }} />
+                      <p style={{ fontWeight: 'bold', fontSize: '12px', fontStyle: 'italic' }}>{occ.species}</p>
+                    </div>
+                    <p style={{ fontSize: '10px', color: '#888', marginBottom: '2px' }}>Fuente: GBIF</p>
                     <hr style={{ margin: '4px 0' }} />
                     <p style={{ fontSize: '11px', color: '#555' }}>
                       {[occ.stateProvince, occ.country].filter(Boolean).join(', ') || 'Sin localidad'}
@@ -406,17 +356,17 @@ function MapView() {
               </CircleMarker>
             ))}
 
-            {/* Registros propios — marcadores de color por especie */}
-            {filteredWithCoords.map(r => (
+            {/* Registros propios — marcadores más grandes con borde blanco */}
+            {ownWithCoords.map(r => (
               <CircleMarker
-                key={r.id}
+                key={`own-${r.id}`}
                 center={[r.latitud, r.longitud]}
-                radius={9}
+                radius={10}
                 pathOptions={{
                   color: '#fff',
-                  weight: 1.5,
+                  weight: 2,
                   fillColor: speciesColorMap[r.species] || '#006B33',
-                  fillOpacity: 0.9,
+                  fillOpacity: 1,
                 }}
               >
                 <Popup>

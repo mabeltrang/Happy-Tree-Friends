@@ -585,8 +585,7 @@ async def get_threat_status(req: ThreatStatusRequest):
 
 
 # ── Ocurrencias GBIF ───────────────────────────────────────────────────────────
-@app.get("/api/gbif-occurrences")
-async def gbif_occurrences(species: str, limit: int = 300):
+def _fetch_gbif(species: str, limit: int) -> dict:
     try:
         encoded = _up.quote(species)
         url = (
@@ -607,9 +606,28 @@ async def gbif_occurrences(species: str, limit: int = 300):
                     "stateProvince": occ.get("stateProvince", ""),
                     "year": occ.get("year"),
                 })
-        return {"species": species, "count": len(points), "occurrences": points}
+        return {"species": species, "occurrences": points}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"[WARN] GBIF fetch falló para '{species}': {e}")
+        return {"species": species, "occurrences": []}
+
+@app.get("/api/gbif-occurrences")
+async def gbif_occurrences(species: str, limit: int = 300):
+    result = _fetch_gbif(species, limit)
+    if not result["occurrences"] and len(result["occurrences"]) == 0:
+        pass  # no error, just empty
+    return result
+
+@app.get("/api/gbif-occurrences/all")
+async def gbif_occurrences_all(limit_per_species: int = 150):
+    """Carga ocurrencias GBIF de todas las especies del modelo en paralelo."""
+    import concurrent.futures
+    if not class_names:
+        return []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
+        futures = [ex.submit(_fetch_gbif, sp, limit_per_species) for sp in class_names]
+        results = [f.result() for f in concurrent.futures.as_completed(futures)]
+    return results
 
 
 # ── Servir frontend compilado ──────────────────────────────────────────────────
