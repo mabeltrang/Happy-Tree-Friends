@@ -26,7 +26,8 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-load_dotenv(dotenv_path=Path(__file__).parent / ".env")
+load_dotenv(dotenv_path=Path(__file__).parent / ".env", override=False)
+
 
 # ── Rutas ──────────────────────────────────────────────────────────────────────
 MODEL_DIR    = Path(__file__).parent / "model"
