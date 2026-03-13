@@ -529,39 +529,53 @@ def _load_mads_data() -> dict:
 
 def _query_iucn(species_name: str) -> str:
     token = os.getenv("IUCN_API_TOKEN", "")
+    print(f"[DEBUG IUCN] token presente: {bool(token)}, longitud: {len(token)}")
     if not token:
         return "Sin configurar"
     try:
         encoded = _up.quote(species_name)
         url = f"https://apiv3.iucnredlist.org/api/v3/species/{encoded}?token={token}"
+        print(f"[DEBUG IUCN] Consultando: {url}")
         with _ur.urlopen(url, timeout=10) as r:
-            data = json.loads(r.read())
+            raw = r.read()
+            print(f"[DEBUG IUCN] Respuesta cruda: {raw[:300]}")
+            data = json.loads(raw)
         result = data.get("result", [])
         if result:
-            return result[0].get("category", "No encontrado")
+            category = result[0].get("category", "No encontrado")
+            print(f"[DEBUG IUCN] Categoría encontrada: {category}")
+            return category
+        print(f"[DEBUG IUCN] Sin resultados para '{species_name}'")
         return "No encontrado"
     except Exception as e:
-        print(f"[WARN] IUCN query falló para '{species_name}': {e}")
+        print(f"[ERROR IUCN] Query falló para '{species_name}': {type(e).__name__}: {e}")
         return "Error"
 
 def _query_cites(species_name: str) -> str:
     token = os.getenv("CITES_API_TOKEN", "")
+    print(f"[DEBUG CITES] token presente: {bool(token)}, longitud: {len(token)}")
     if not token:
         return "Sin configurar"
     try:
         encoded = _up.quote(species_name)
         url = f"https://api.speciesplus.net/api/v1/taxon_concepts.json?name={encoded}&with_descendants=true"
+        print(f"[DEBUG CITES] Consultando: {url}")
         req = _ur.Request(url, headers={"X-Authentication-Token": token})
         with _ur.urlopen(req, timeout=10) as r:
-            data = json.loads(r.read())
+            raw = r.read()
+            print(f"[DEBUG CITES] Respuesta cruda: {raw[:300]}")
+            data = json.loads(raw)
         for taxon in data.get("taxon_concepts", []):
             listings = taxon.get("cites_listings", [])
             if listings:
                 latest = sorted(listings, key=lambda x: x.get("change_date", ""), reverse=True)[0]
-                return f"Apéndice {latest.get('appendix', '?')}"
+                appendix = f"Apéndice {latest.get('appendix', '?')}"
+                print(f"[DEBUG CITES] Listado encontrado: {appendix}")
+                return appendix
+        print(f"[DEBUG CITES] No listado para '{species_name}'")
         return "No listado"
     except Exception as e:
-        print(f"[WARN] CITES query falló para '{species_name}': {e}")
+        print(f"[ERROR CITES] Query falló para '{species_name}': {type(e).__name__}: {e}")
         return "Error"
 
 class ThreatStatusRequest(BaseModel):
@@ -581,6 +595,7 @@ async def get_threat_status(req: ThreatStatusRequest):
             if key.lower() == name.lower():
                 mads_status = val
                 break
+        print(f"[DEBUG] Consultando estado de amenaza para: '{name}'")
         results.append({
             "species": name,
             "iucn":   _query_iucn(name),
