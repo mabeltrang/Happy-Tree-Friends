@@ -566,6 +566,34 @@ async def get_threat_status(req: ThreatStatusRequest):
     return results
 
 
+# ── Ocurrencias GBIF ───────────────────────────────────────────────────────────
+@app.get("/api/gbif-occurrences")
+async def gbif_occurrences(species: str, limit: int = 300):
+    try:
+        encoded = _up.quote(species)
+        url = (
+            f"https://api.gbif.org/v1/occurrence/search"
+            f"?scientificName={encoded}&hasCoordinate=true&limit={limit}"
+        )
+        with _ur.urlopen(url, timeout=15) as r:
+            data = json.loads(r.read())
+        points = []
+        for occ in data.get("results", []):
+            lat = occ.get("decimalLatitude")
+            lng = occ.get("decimalLongitude")
+            if lat is not None and lng is not None:
+                points.append({
+                    "lat": lat,
+                    "lng": lng,
+                    "country": occ.get("country", ""),
+                    "stateProvince": occ.get("stateProvince", ""),
+                    "year": occ.get("year"),
+                })
+        return {"species": species, "count": len(points), "occurrences": points}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ── Servir frontend compilado ──────────────────────────────────────────────────
 FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
 
